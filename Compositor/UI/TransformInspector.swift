@@ -90,7 +90,7 @@ private struct TransformValueField: View {
                 .scrubbable(sensitivity: 1, value: Binding(get: { value }, set: { newValue in
                     change(newValue)
                     text = Self.formatted(Double(newValue))
-                }), range: range)
+                }), range: range, step: 1)
             TextField(label, text: $text)
                 .textFieldStyle(.roundedBorder).focused($focused)
                 .accessibilityIdentifier("transform\(label)")

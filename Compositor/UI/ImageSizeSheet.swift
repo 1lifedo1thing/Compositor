@@ -107,20 +107,20 @@ struct ImageSizeSheet: View {
             HStack {
                 Text("Width").frame(width: 75, alignment: .leading)
                     .scrubbable(sensitivity: scrubSensitivity(isWidth: true),
-                                value: dimension(isWidth: true), range: scrubRange(isWidth: true))
+                                value: dimension(isWidth: true), range: scrubRange(isWidth: true), step: 1)
                     .disabled(!canScrubDimensions)
                 TextField("Width", value: dimension(isWidth: true), format: .number.precision(.fractionLength(0...3)))
             }
             HStack {
                 Text("Height").frame(width: 75, alignment: .leading)
                     .scrubbable(sensitivity: scrubSensitivity(isWidth: false),
-                                value: dimension(isWidth: false), range: scrubRange(isWidth: false))
+                                value: dimension(isWidth: false), range: scrubRange(isWidth: false), step: 1)
                     .disabled(!canScrubDimensions)
                 TextField("Height", value: dimension(isWidth: false), format: .number.precision(.fractionLength(0...3)))
             }
             Toggle("Lock aspect ratio", isOn: $locked).disabled(!resample)
             HStack {
-                Text("Resolution").scrubbable(sensitivity: 1, value: $resolution, range: 1...9600)
+                Text("Resolution").scrubbable(sensitivity: 1, value: $resolution, range: 1...9600, step: 1)
                 TextField("Resolution", value: $resolution, format: .number.precision(.fractionLength(0...3)))
                     .onChange(of: resolution) { old, new in
                         if resample, unit == "Inches" || unit == "Centimeters",

@@ -74,12 +74,12 @@ struct CanvasSizeSheet: View {
             }
             HStack {
                 Text("Width").frame(width: 60, alignment: .leading)
-                    .scrubbable(sensitivity: scrubSensitivity(true), value: dimension(true), range: scrubRange(true))
+                    .scrubbable(sensitivity: scrubSensitivity(true), value: dimension(true), range: scrubRange(true), step: 1)
                 TextField("Width", value: dimension(true), format: .number.precision(.fractionLength(0...3)))
             }
             HStack {
                 Text("Height").frame(width: 60, alignment: .leading)
-                    .scrubbable(sensitivity: scrubSensitivity(false), value: dimension(false), range: scrubRange(false))
+                    .scrubbable(sensitivity: scrubSensitivity(false), value: dimension(false), range: scrubRange(false), step: 1)
                 TextField("Height", value: dimension(false), format: .number.precision(.fractionLength(0...3)))
             }
             Toggle("Relative to current dimensions", isOn: $draft.relative)

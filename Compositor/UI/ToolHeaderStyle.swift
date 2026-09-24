@@ -19,10 +19,10 @@ extension View {
 
     /// Lets a field without a separate label use its unit as the drag target.
     func unitSuffix<Value: BinaryFloatingPoint>(_ unit: String, scrubValue: Binding<Value>,
-                                                sensitivity: Value, range: ClosedRange<Value>) -> some View {
+                                                sensitivity: Value, range: ClosedRange<Value>, step: Value? = nil) -> some View {
         HStack(spacing: 2) {
             self
-            Text(unit).scrubbable(sensitivity: sensitivity, value: scrubValue, range: range)
+            Text(unit).scrubbable(sensitivity: sensitivity, value: scrubValue, range: range, step: step)
         }
     }
 

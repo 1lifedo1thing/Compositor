@@ -6,6 +6,8 @@ private struct NumericScrub<Value: BinaryFloatingPoint>: ViewModifier {
     @Binding var value: Value
     let sensitivity: Value
     let range: ClosedRange<Value>
+    /// Dragged values snap to multiples of this (1 for whole numbers); typing can still give any value.
+    let step: Value?
     let onStart: () -> Void
     let onEnd: () -> Void
     @State private var startValue: Value?
@@ -29,7 +31,8 @@ private struct NumericScrub<Value: BinaryFloatingPoint>: ViewModifier {
                     let start = startValue ?? value
                     if startValue == nil { startValue = start; onStart() }
                     NSCursor.resizeLeftRight.set()
-                    let proposed = start + Value(drag.translation.width) * sensitivity
+                    var proposed = start + Value(drag.translation.width) * sensitivity
+                    if let step, step > 0 { proposed = (proposed / step).rounded() * step }
                     value = min(range.upperBound, max(range.lowerBound, proposed))
                 }
                 .onEnded { _ in
@@ -42,10 +45,10 @@ private struct NumericScrub<Value: BinaryFloatingPoint>: ViewModifier {
 
 extension View {
     func scrubbable<Value: BinaryFloatingPoint>(sensitivity: Value, value: Binding<Value>,
-                                                range: ClosedRange<Value>,
+                                                range: ClosedRange<Value>, step: Value? = nil,
                                                 onStart: @escaping () -> Void = {},
                                                 onEnd: @escaping () -> Void = {}) -> some View {
-        modifier(NumericScrub(value: value, sensitivity: sensitivity, range: range,
+        modifier(NumericScrub(value: value, sensitivity: sensitivity, range: range, step: step,
                               onStart: onStart, onEnd: onEnd))
     }
 

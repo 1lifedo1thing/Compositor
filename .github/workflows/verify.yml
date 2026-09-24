@@ -55,7 +55,6 @@ jobs:
           -parallel-testing-enabled YES
           -skip-testing:CompositorTests/FloatingPanelTests
           -skip-testing:CompositorTests/SliderSnapTests
-          -skip-testing:CompositorUITests
 
       - name: Run window tests serially
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -69,7 +68,6 @@ jobs:
           -parallel-testing-enabled NO
           -only-testing:CompositorTests/FloatingPanelTests
           -only-testing:CompositorTests/SliderSnapTests
-          -only-testing:CompositorUITests
 
       - name: Upload test results
         if: failure()

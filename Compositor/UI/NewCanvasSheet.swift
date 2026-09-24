@@ -73,11 +73,8 @@ struct NewCanvasSheet: View {
         return nil
     }
     private func dimension(_ title: String, text: Binding<String>, field: Field) -> some View {
-        let numericValue = Binding<Int>(get: { Int(text.wrappedValue) ?? 1 },
-                                        set: { text.wrappedValue = String($0) })
-        return VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.callout.weight(.medium))
-                .scrubbable(sensitivity: 1, value: numericValue, range: 1...30_000)
             HStack {
                 TextField(title, text: text).textFieldStyle(.plain)
                     .focused($focusedField, equals: field)

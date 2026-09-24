@@ -31,7 +31,6 @@
 		8F311F99304F03BB0017D14F /* Compositor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Compositor.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F311FA6304F03BC0017D14F /* CompositorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CompositorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F311FB0304F03BC0017D14F /* CompositorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CompositorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B88005343065773A000A3B04 /* Compositor.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Compositor.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -81,7 +80,6 @@
 		8F311F90304F03BB0017D14F = {
 			isa = PBXGroup;
 			children = (
-				B88005343065773A000A3B04 /* Compositor.xctestplan */,
 				8F311F9B304F03BB0017D14F /* Compositor */,
 				8F311FA9304F03BC0017D14F /* CompositorTests */,
 				8F311FB3304F03BC0017D14F /* CompositorUITests */,
