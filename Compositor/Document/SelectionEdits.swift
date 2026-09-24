@@ -200,7 +200,8 @@ extension EditorSession {
     private func applyPixelEdit(to layer: ImageLayer, name: String, _ paint: (BrushStroke) throws -> Void) async {
         finishOpacityEdit()
         do {
-            let edit = try makeRasterEdit(for: layer)
+            // On a mask, a fill covers the whole canvas, past the mask's own area, as the brush can.
+            let edit = try makeRasterEdit(for: layer, growsMask: true)
             try paint(edit)
             guard !edit.patches.isEmpty else { return }
             try await commitRasterEdit(edit, name: name)

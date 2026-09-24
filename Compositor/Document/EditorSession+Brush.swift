@@ -10,9 +10,9 @@ extension EditorSession {
             && (isMaskSelected || activeLayer?.adjustment == nil)
     }
     /// Tiled raster edit of the active layer's pixels or mask, within the shared pixel budgets.
-    func makeRasterEdit(for layer: ImageLayer, settings: BrushSettings = BrushSettings()) throws -> BrushStroke {
+    func makeRasterEdit(for layer: ImageLayer, settings: BrushSettings = BrushSettings(), growsMask: Bool = false) throws -> BrushStroke {
         guard let document else { throw ProjectError.tooLarge }
-        let stroke = try BrushStroke(layer: layer, mask: isMaskSelected, settings: settings, canvas: document.size)
+        let stroke = try BrushStroke(layer: layer, mask: isMaskSelected, settings: settings, canvas: document.size, growsMask: growsMask)
         let used = document.layers.filter { $0.id != layer.id }.reduce(0) { total, layer in
             let image = isMaskSelected ? layer.mask?.asset.image : layer.asset?.image
             return total + (image.map { $0.width * $0.height } ?? 0)
@@ -51,7 +51,7 @@ extension EditorSession {
             settings.erasing = tool == .brush && brushMode == .erase && !isMaskSelected
             settings.healingMode = spotHealingMode
             if isMaskSelected { settings.red = maskPaintWhite ? 1 : 0; settings.green = settings.red; settings.blue = settings.red }
-            let stroke = try makeRasterEdit(for: layer, settings: settings)
+            let stroke = try makeRasterEdit(for: layer, settings: settings, growsMask: tool == .brush)
             stroke.clone = clone
             stroke.isBlur = tool == .blur
             brushStroke = stroke
@@ -140,7 +140,13 @@ extension EditorSession {
         }
         beginEdit(stroke.editName ?? (stroke.isMask ? "Paint Mask" : stroke.settings.erasing ? "Erase" : stroke.isBlur ? "Blur" : stroke.clone != nil ? "Clone Stamp" : stroke.settings.healing ? "Spot Healing" : "Brush Stroke"))
         if stroke.isMask {
-            document?.layers[index].mask = current.mask.map { $0.replacing(result.asset) } ?? LayerMask(asset: result.asset)
+            document?.layers[index].mask = current.mask.map { mask in
+                var painted = mask.replacing(result.asset)
+                // Grown past its layer, or already placed on its own: the mask keeps its place on the document. A linked
+                // one still moves with its layer.
+                if mask.placement != nil || result.bounds != stroke.sourceRect { painted.placement = result.transform }
+                return painted
+            } ?? LayerMask(asset: result.asset)
         } else {
             document?.layers[index] = ImageLayer(id: current.id, asset: result.asset, name: current.name,
                 isVisible: current.isVisible, transform: result.transform, parentID: current.parentID, isGroup: false,
@@ -172,7 +178,13 @@ extension EditorSession {
               current.mask?.asset.image === stroke.layer.mask?.asset.image else { return }
         beginEdit(name)
         if stroke.isMask {
-            document?.layers[index].mask = current.mask.map { $0.replacing(asset) } ?? LayerMask(asset: asset)
+            let bounds = result.pixelBounds.offsetBy(dx: stroke.committedBounds.minX, dy: stroke.committedBounds.minY)
+            document?.layers[index].mask = current.mask.map { mask in
+                var edited = mask.replacing(asset)
+                // Grown past its layer, or already placed on its own: the mask keeps its place on the document.
+                if mask.placement != nil || bounds != stroke.sourceRect { edited.placement = transform }
+                return edited
+            } ?? LayerMask(asset: asset)
         } else {
             document?.layers[index] = ImageLayer(id: current.id, asset: asset, name: current.name,
                 isVisible: current.isVisible, transform: transform, parentID: current.parentID, isGroup: false,
