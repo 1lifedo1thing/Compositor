@@ -10,7 +10,7 @@ Because it’s open source, you can download the Xcode project and add, remove, 
 
 ### Layers
 - Layers and folders, with opacity and Photoshop's full set of blend modes in its order — a folder's opacity dims everything inside it
-- Layer masks: paint, fill, invert, blur and feather them; link or unlink them to transform a mask on its own
+- Layer masks: paint, fill, invert, blur and feather them anywhere on the canvas, past the layer's own pixels; link or unlink them to transform a mask on its own
 - Clipping masks and folder masks
 - Adjustment layers: Hue/Saturation, Levels, Curves, Exposure, Gradient Map, Grain, Black & White, Color Balance, Invert, Gaussian Blur, Motion Blur and Noise
 - Layer effects: Stroke, Drop Shadow, Color Overlay, Inner Shadow, Outer Glow and Inner Glow, rendered on the GPU and editable at any time
@@ -59,6 +59,7 @@ Because it’s open source, you can download the Xcode project and add, remove, 
 - Large documents: the memory budget scales with your Mac, and a Photoshop file too big to open has its layers cropped to the canvas instead
 - Export JPEG with a live preview (⇧⌥⌘S); Copy Merged
 - Photoshop-style keyboard shortcuts throughout, remappable in Edit > Keyboard Shortcuts
+- Drag a number's label to scrub its value, as in Photoshop
 - Automatic updates, signed and notarized
 
 ## Requirements
