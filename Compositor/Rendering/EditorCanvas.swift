@@ -20,6 +20,10 @@ final class CanvasView: NSView {
     var inlineTextEditor: InlineTextEditor?
     /// The text being typed, rendered as the layer will hold it, remade only when its style changes.
     private var draftTextCache: (style: LayerTextStyle, image: CGImage)?
+    /// The effects rendered for the text being edited, and what they were rendered from.
+    private var draftEffects: (image: CGImage, effects: LayerEffects, transform: LayerTransform, rendered: CGImage, inset: CGFloat)?
+    /// Which layer and text `draftEffects` were made for, so they can stand in once the edit is committed.
+    private var draftEffectsSource: (layerID: UUID, style: LayerTextStyle)?
     /// The text being typed as pixels, where the editor shows it (see InlineTextEditor).
     private var draftText: (image: CGImage, transform: LayerTransform)? {
         guard let draft = session.textDraft, let transform = inlineTextEditor?.shownTransform else { draftTextCache = nil; return nil }
@@ -544,8 +548,10 @@ final class CanvasView: NSView {
             sampleRing.isHidden = true
             updateTrackingAreas()
             window?.invalidateCursorRects(for: self)
-            if picking, let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
-                Self.eyedropperCursor.set()
+            // Cursor rects only apply when the pointer enters them, so a pointer already over the canvas is set here,
+            // both ways: the eyedropper when picking starts, and the tool's own cursor again when it ends.
+            if let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+                if picking { Self.eyedropperCursor.set() } else { restoreToolCursor() }
             }
         }
         if displayedCropRect != transformOverlay.cropViewRect {
@@ -811,6 +817,16 @@ final class CanvasView: NSView {
     }
 
     private func drawLayers(_ document: CanvasDocument, scale: CGFloat, center: @escaping (CGPoint) -> CGPoint, in context: CGContext, onSurface: Bool = false) {
+        // Text editing just ended: if the layer now holds the text as it was last typed, its effects from the edit stand
+        // in until they're rebuilt from the committed pixels, so they don't blink off for a frame.
+        if session.textDraft == nil, let built = draftEffects, let source = draftEffectsSource {
+            if document.layers.first(where: { $0.id == source.layerID })?.liveText?.style == source.style {
+                session.effectsPreviews.seed(source.layerID, image: built.rendered,
+                    placement: LayerEffectsRenderer.placed(built.transform, image: built.rendered, inset: built.inset))
+            }
+            draftEffects = nil
+            draftEffectsSource = nil
+        }
         session.effectsPreviews.prepare(layers: document.layers)
         // Color Burn and Color Dodge are blended by hand against the pixels under them, which needs a surface to
         // read back (see SeparableBlend).
@@ -829,10 +845,31 @@ final class CanvasView: NSView {
             guard let layer = byID[id] else { return }
             // Text being edited draws as it will be committed, in its place among the layers.
             if layer.id == session.textDraft?.layerID {
-                if let text = draftText {
-                    LayerRenderer.draw(text.image, transform: text.transform, center: center(text.transform.center), scale: scale,
-                        opacity: layer.effectiveOpacity(in: byID), blendMode: blendMode(of: layer), in: context)
+                guard let text = draftText else { return }
+                let opacity = layer.effectiveOpacity(in: byID)
+                // Its effects stay on while it's edited, redone from the text as typed. Until a change has been redone,
+                // the last effects stand in under the new text rather than blinking off.
+                if let effects = layer.effects?.visible, !effects.isEmpty, effects.isValid {
+                    // Redone only when the text's pixels, its place or its effects change.
+                    if draftEffects?.image !== text.image || draftEffects?.effects != effects || draftEffects?.transform != text.transform {
+                        let mask = layer.mask.flatMap { owned -> CGImage? in
+                            guard let placement = owned.placement else { return owned.enabledImage }
+                            return owned.clipImage(placement: placement, over: text.transform,
+                                                   width: text.image.width, height: text.image.height, limit: 2048)
+                        }
+                        draftEffects = session.effectsPreviews.renderNow(image: text.image, mask: mask, effects: effects)
+                            .map { (text.image, effects, text.transform, $0.image, $0.inset) }
+                        draftEffectsSource = session.textDraft.map { (layer.id, $0.style) }
+                    }
+                    if let built = draftEffects {
+                        let grown = LayerEffectsRenderer.placed(text.transform, image: built.rendered, inset: built.inset)
+                        LayerRenderer.draw(built.rendered, transform: grown, center: center(grown.center), scale: scale,
+                            opacity: opacity, blendMode: blendMode(of: layer), mask: nil, in: context)
+                        return
+                    }
                 }
+                LayerRenderer.draw(text.image, transform: text.transform, center: center(text.transform.center), scale: scale,
+                    opacity: opacity, blendMode: blendMode(of: layer), in: context)
                 return
             }
             // A folder the layer sits in dims it along with everything else inside (see LayerOpacity).
@@ -935,6 +972,15 @@ final class CanvasView: NSView {
                 // A mask on its own placement is painted in its own grid: the layer draws through the mask as the
                 // stroke leaves it, resampled into the layer's grid.
                 let preview = stroke.placedMaskPreview(placement: placement)
+                // With effects on, they're redone as the mask changes, from the mask as it's being left.
+                if let preview, let surface = placedMaskSurface(layer: layer, stroke: stroke, placement: placement, preview: preview),
+                   let built = surface.image {
+                    let grown = LayerEffectsRenderer.placed(transform, image: built, inset: surface.margin)
+                    surface.placement = grown
+                    LayerRenderer.draw(built, transform: grown, center: center(grown.center), scale: scale,
+                        opacity: opacity, blendMode: blendMode(of: layer), mask: nil, in: context)
+                    return
+                }
                 if let raster = stroke.layer.asset?.raster {
                     TiledLayerRenderer.drawRaster(raster, transform: transform, center: center(transform.center), scale: scale,
                         opacity: opacity, blendMode: blendMode(of: layer), mask: preview, in: context)
@@ -943,6 +989,14 @@ final class CanvasView: NSView {
                         opacity: opacity, blendMode: blendMode(of: layer), mask: preview, in: context)
                 }
             } else if let stroke {
+                // With effects on, the surface redoes them as the mask changes, so they stay on while it's painted.
+                if let surface = strokeSurface(layer: layer, stroke: stroke, mask: nil), let built = surface.image {
+                    let grown = LayerEffectsRenderer.placed(transform, image: built, inset: surface.margin)
+                    surface.placement = grown
+                    LayerRenderer.draw(built, transform: grown, center: center(grown.center), scale: scale,
+                        opacity: opacity, blendMode: blendMode(of: layer), mask: nil, in: context)
+                    return
+                }
                 // Painting the mask shows the layer through the mask as it will be once committed, the same way.
                 let previous = stroke.layer.asset
                 TiledLayerRenderer.drawMaskStroke(width: stroke.width, height: stroke.height, sourceRect: stroke.sourceRect,
@@ -1047,7 +1101,50 @@ final class CanvasView: NSView {
             strokeSurface = LayerEffectsSurface(layerID: layer.id, effects: effects, grid: grid, sourceRect: stroke.sourceRect)
         }
         guard let surface = strokeSurface else { return nil }
-        surface.update(base: stroke.layer.asset?.image, patches: stroke.patches, mask: mask)
+        if stroke.isMask {
+            // The mask as the stroke leaves it, over a region of the grid: beyond the old mask an edit reveals, as it
+            // does once committed.
+            let old = stroke.layer.mask?.asset.image, patches = stroke.patches, sourceRect = stroke.sourceRect
+            surface.update(base: stroke.layer.asset?.image, patches: [], mask: nil, maskStroke: .init(patches: patches, toGrid: .identity) { region in
+                guard let coverage = try? BrushRaster.context(width: Int(region.width), height: Int(region.height), mask: true) else { return nil }
+                coverage.translateBy(x: -region.minX, y: -region.minY)
+                coverage.setFillColor(gray: 1, alpha: 1)
+                coverage.fill(region)
+                if let old { BrushRaster.draw(old, in: sourceRect, mask: true, context: coverage) }
+                for patch in patches where patch.rect.intersects(region) {
+                    BrushRaster.draw(patch.image, in: patch.rect, mask: true, context: coverage)
+                }
+                return coverage.makeImage()
+            })
+        } else {
+            surface.update(base: stroke.layer.asset?.image, patches: stroke.patches, mask: mask)
+        }
+        return surface
+    }
+
+    /// The effects surface for a mask on its own placement being painted. Its stroke paints in the mask's grid; the
+    /// surface stays in the layer's, and takes the mask from `preview`, the stroke's mask resampled into that grid.
+    private func placedMaskSurface(layer: ImageLayer, stroke: BrushStroke, placement: LayerTransform, preview: CGImage) -> LayerEffectsSurface? {
+        guard let effects = layer.effects?.visible, !effects.isEmpty, effects.isValid, let base = stroke.layer.asset?.image else { return nil }
+        let grid = CGSize(width: base.width, height: base.height)
+        let full = CGRect(origin: .zero, size: grid)
+        if strokeSurface?.matches(layerID: layer.id, effects: effects, grid: grid, sourceRect: full) != true {
+            strokeSurface = LayerEffectsSurface(layerID: layer.id, effects: effects, grid: grid, sourceRect: full)
+        }
+        guard let surface = strokeSurface else { return nil }
+        let toGrid = BrushRaster.pixelToDocument(placement, width: stroke.width, height: stroke.height)
+            .concatenating(BrushRaster.pixelToDocument(stroke.layer.transform, width: base.width, height: base.height).inverted())
+        surface.update(base: base, patches: [], mask: nil, maskStroke: .init(patches: stroke.patches, toGrid: toGrid) { region in
+            guard let coverage = try? BrushRaster.context(width: Int(region.width), height: Int(region.height), mask: true) else { return nil }
+            coverage.translateBy(x: -region.minX, y: -region.minY)
+            coverage.interpolationQuality = .medium
+            coverage.saveGState()
+            coverage.translateBy(x: 0, y: full.maxY)
+            coverage.scaleBy(x: 1, y: -1)
+            coverage.draw(preview, in: full)
+            coverage.restoreGState()
+            return coverage.makeImage()
+        })
         return surface
     }
 
@@ -1143,6 +1240,25 @@ final class CanvasView: NSView {
         context.restoreGState()
     }
 
+    /// Puts the current tool's cursor back after picking, the way the cursor rects would on entering the canvas.
+    private func restoreToolCursor() {
+        if session.hueTargeting { NSCursor.resizeLeftRight.set() }
+        else if session.tool.isSelectionTool, !spaceHeld { lassoCursor.set() }
+        else if session.tool == .cloneStamp, session.cloneSource != nil, !optionHeld, !spaceHeld { Self.hiddenCursor.set() }
+        else { toolCursor.set() }
+    }
+
+    /// The current tool's cursor over the canvas, with nothing being picked or dragged.
+    private var toolCursor: NSCursor {
+        spaceHeld || session.tool == .hand ? .openHand
+            // The Move tool's cursor depends on the pointer (handles, Option to duplicate), so match it here.
+            : session.tool == .move ? window.map { transformCursor(at: convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? .arrow
+            : session.tool == .type ? .iBeam
+            : session.tool == .idle ? .arrow
+            : session.tool == .zoom ? (optionHeld ? Self.zoomOutCursor : Self.zoomInCursor)
+            : .crosshair
+    }
+
     override func resetCursorRects() {
         if let dragCursor { addCursorRect(bounds, cursor: dragCursor); return }
         if picking { addCursorRect(bounds, cursor: Self.eyedropperCursor); return }
@@ -1154,14 +1270,7 @@ final class CanvasView: NSView {
             addCursorRect(bounds, cursor: Self.hiddenCursor)
             return
         }
-        let cursor: NSCursor = spaceHeld || session.tool == .hand ? .openHand
-            // The Move tool's cursor depends on the pointer (handles, Option to duplicate), so match it here.
-            : session.tool == .move ? window.map { transformCursor(at: convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? .arrow
-            : session.tool == .type ? .iBeam
-            : session.tool == .idle ? .arrow
-            : session.tool == .zoom ? (optionHeld ? Self.zoomOutCursor : Self.zoomInCursor)
-            : .crosshair
-        addCursorRect(bounds, cursor: cursor)
+        addCursorRect(bounds, cursor: toolCursor)
         guard session.tool == .crop, !spaceHeld else { return }
         let positions: [NSCursor.FrameResizePosition] = [.topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left]
         for region in transformOverlay.cropResizeRegions.reversed() {
@@ -1295,6 +1404,8 @@ final class CanvasView: NSView {
             }
             return
         }
+        // An eyedropper left over from a picker that closed while the pointer was elsewhere, such as over its own panel.
+        if NSCursor.current == Self.eyedropperCursor { restoreToolCursor() }
         brushPointer = convert(event.locationInWindow, from: nil)
         updateBrushCursor()
         if session.tool == .move { updateTransformCursor(at: convert(event.locationInWindow, from: nil), flags: event.modifierFlags) }
