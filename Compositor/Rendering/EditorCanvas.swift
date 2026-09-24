@@ -911,7 +911,10 @@ final class CanvasView: NSView {
                 return
             }
             // A mask stroke paints the mask's grid; the layer itself stays put.
-            let transform = (stroke?.isMask == true ? nil : stroke?.paintTransform) ?? session.displayedTransform(for: layer)
+            // A mask on its own placement paints in its own grid and draws the layer where it is; any other stroke's grid,
+            // grown past the layer, is where the brush paints.
+            let transform = (stroke?.isMask == true && stroke?.layer.mask?.placement != nil ? nil : stroke?.paintTransform)
+                ?? session.displayedTransform(for: layer)
             // A mask placed apart from its layer is resampled into the grid the layer draws in (at most 2048 pixels
             // across while something moves, else about the size it's drawn).
             let mask: CGImage? = {
@@ -971,7 +974,7 @@ final class CanvasView: NSView {
             } else if let stroke, let placement = stroke.layer.mask?.placement {
                 // A mask on its own placement is painted in its own grid: the layer draws through the mask as the
                 // stroke leaves it, resampled into the layer's grid.
-                let preview = stroke.placedMaskPreview(placement: placement)
+                let preview = stroke.placedMaskPreview(placement: stroke.paintTransform)
                 // With effects on, they're redone as the mask changes, from the mask as it's being left.
                 if let preview, let surface = placedMaskSurface(layer: layer, stroke: stroke, placement: placement, preview: preview),
                    let built = surface.image {
@@ -1104,11 +1107,11 @@ final class CanvasView: NSView {
         if stroke.isMask {
             // The mask as the stroke leaves it, over a region of the grid: beyond the old mask an edit reveals, as it
             // does once committed.
-            let old = stroke.layer.mask?.asset.image, patches = stroke.patches, sourceRect = stroke.sourceRect
+            let old = stroke.layer.mask?.asset.image, patches = stroke.patches, sourceRect = stroke.sourceRect, background = stroke.maskBackground
             surface.update(base: stroke.layer.asset?.image, patches: [], mask: nil, maskStroke: .init(patches: patches, toGrid: .identity) { region in
                 guard let coverage = try? BrushRaster.context(width: Int(region.width), height: Int(region.height), mask: true) else { return nil }
                 coverage.translateBy(x: -region.minX, y: -region.minY)
-                coverage.setFillColor(gray: 1, alpha: 1)
+                coverage.setFillColor(gray: background, alpha: 1)
                 coverage.fill(region)
                 if let old { BrushRaster.draw(old, in: sourceRect, mask: true, context: coverage) }
                 for patch in patches where patch.rect.intersects(region) {
@@ -1132,7 +1135,7 @@ final class CanvasView: NSView {
             strokeSurface = LayerEffectsSurface(layerID: layer.id, effects: effects, grid: grid, sourceRect: full)
         }
         guard let surface = strokeSurface else { return nil }
-        let toGrid = BrushRaster.pixelToDocument(placement, width: stroke.width, height: stroke.height)
+        let toGrid = BrushRaster.pixelToDocument(stroke.paintTransform, width: stroke.width, height: stroke.height)
             .concatenating(BrushRaster.pixelToDocument(stroke.layer.transform, width: base.width, height: base.height).inverted())
         surface.update(base: base, patches: [], mask: nil, maskStroke: .init(patches: stroke.patches, toGrid: toGrid) { region in
             guard let coverage = try? BrushRaster.context(width: Int(region.width), height: Int(region.height), mask: true) else { return nil }
