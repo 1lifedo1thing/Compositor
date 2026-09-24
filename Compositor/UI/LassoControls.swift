@@ -68,7 +68,8 @@ struct LassoControls: View {
                     .frame(width: 48).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
                     .arrowSteps(value: { Double(session.selectionFeatherAmount) },
                                 change: { session.selectionFeatherAmount = Int(min(250, max(1, $0))) })
-                    .unitSuffix("px")
+                    .unitSuffix("px", scrubValue: $session.selectionFeatherAmount,
+                                sensitivity: 1, range: 1...250)
             }
             Spacer(minLength: 0)
             if let selection = session.selection {
@@ -84,7 +85,7 @@ struct LassoControls: View {
     private var wandControls: some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
-                Text("Tolerance")
+                Text("Tolerance").scrubbable(sensitivity: 1, value: $session.wandSettings.tolerance, range: 0...255)
                 TextField("Tolerance", value: Binding(get: { session.wandSettings.tolerance },
                                                       set: { session.wandSettings.tolerance = min(255, max(0, $0)) }),
                           format: .number)
@@ -119,7 +120,7 @@ struct LassoControls: View {
             .pickerStyle(.segmented).labelsHidden().fixedSize()
             .help("Analyze the active layer only, or every visible layer as shown")
             HStack(spacing: 6) {
-                Text("Edge")
+                Text("Edge").scrubbable(sensitivity: 1, value: $session.objectSelectionSettings.edgeOffset, range: -10...10)
                 TextField("Edge", value: Binding(get: { session.objectSelectionSettings.edgeOffset },
                                                  set: { session.objectSelectionSettings.edgeOffset = min(10, max(-10, $0)) }),
                           format: .number)
@@ -147,7 +148,7 @@ struct LassoControls: View {
                 .multilineTextAlignment(.trailing)
                 .arrowSteps(value: { Double(amount.wrappedValue) },
                             change: { amount.wrappedValue = Int(min(500, max(1, $0.rounded()))) })
-                .unitSuffix("px")
+                .unitSuffix("px", scrubValue: amount, sensitivity: 1, range: 1...500)
         }
         .disabled(!session.canModifySelection)
         .help("\(title) the selection by this many pixels")
@@ -207,6 +208,9 @@ struct SelectionAmountSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 Text("Amount").frame(minWidth: 60, alignment: .leading)
+                    .scrubbable(sensitivity: 1,
+                                value: Binding<Int>(get: { amount ?? 1 }, set: { input = String($0) }),
+                                range: 1...maximum)
                 Slider(value: Binding(get: { Double(amount ?? 1) },
                                       set: { input = String(Int($0.rounded())) }),
                        in: 1...Double(maximum), step: 1)

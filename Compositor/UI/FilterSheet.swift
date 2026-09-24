@@ -178,6 +178,9 @@ struct FilterSheet: View {
         let step = pow(10, Double(decimals))
         return HStack(spacing: 10) {
             Text(title).frame(minWidth: 60, alignment: .leading).fixedSize()
+                .scrubbable(sensitivity: 1 / step,
+                            value: Binding(get: { settings[keyPath: key] }, set: { value in update { $0[keyPath: key] = value } }),
+                            range: range)
             Slider(value: Binding(get: { logarithmic ? log(settings[keyPath: key]) : settings[keyPath: key] },
                                   set: { value in update { $0[keyPath: key] = ((logarithmic ? exp(value) : value) * step).rounded() / step } }),
                    in: logarithmic ? log(range.lowerBound)...log(range.upperBound) : range)

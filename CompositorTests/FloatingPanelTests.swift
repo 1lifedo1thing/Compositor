@@ -17,12 +17,14 @@ struct FloatingPanelTests {
         return session
     }
     /// Lets AppKit run its constraint/display pass, which is where hosting used to crash.
+    private func activateTestHost() { NSApp.activate(ignoringOtherApps: true) }
     private func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.4)) }
 
     /// Cmd+U used to crash here: `.preferredContentSize` sizing made AppKit measure the
     /// SwiftUI view during its constraint pass, and the measurement invalidated layout
     /// re-entrantly, which AppKit turns into a fatal exception.
     @Test func hueSaturationPanelSurvivesALayoutPass() async throws {
+        activateTestHost()
         let session = try sessionWithPixels()
         session.beginHueSaturation()
         #expect(session.hueSaturation != nil)
@@ -53,10 +55,11 @@ struct FloatingPanelTests {
     // Invert has no settings and so no editor; it is covered on its own.
     @Test(arguments: AdjustmentKind.allCases.filter(\.isEditable))
     func adjustmentEditorsUseMovableNonmodalPanels(_ kind: AdjustmentKind) async throws {
+        activateTestHost()
         let session = try sessionWithPixels()
         session.addAdjustment(kind)
         await session.beginAdjustmentEditing(try #require(session.adjustmentEditingID))
-        let controller = FloatingPanelController(name: "testDynamicAdjustmentPanel")
+        let controller = FloatingPanelController(name: "testDynamicAdjustmentPanel-\(kind.rawValue)")
         controller.onClose = { session.finishAdjustmentEditing(commit: false) }
         switch kind {
         case .levels: controller.show(title: "Levels", content: LevelsSheet(session: session))
