@@ -154,8 +154,13 @@ import CoreImage
         }
         if let mask {
             // The layer's own pixels are shown through its mask; paint laid down past them is not masked at all.
+            // Clipped the way BrushRaster draws, so the mask's top row lands on the layer's top row.
             window.saveGState()
-            window.clip(to: sourceRect, mask: mask)
+            window.translateBy(x: sourceRect.minX, y: sourceRect.maxY)
+            window.scaleBy(x: 1, y: -1)
+            window.clip(to: CGRect(origin: .zero, size: sourceRect.size), mask: mask)
+            window.scaleBy(x: 1, y: -1)
+            window.translateBy(x: -sourceRect.minX, y: -sourceRect.maxY)
             drawPixels()
             window.restoreGState()
             window.saveGState()

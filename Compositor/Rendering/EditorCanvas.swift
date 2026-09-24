@@ -895,8 +895,15 @@ final class CanvasView: NSView {
             }
             // A pending distortion shows the layer warped into its new shape — with its effects warped along with
             // it, so they stay on while the corners move.
+            // Asked only while corners are being dragged: the request it makes stands for the layer's effects in the
+            // preview cache, so made on every redraw it would stand in for the normal one below.
             if stroke == nil, layer.effects?.visible.isEmpty == false,
-               let effects = session.effectsPreviews.preview(for: layer, mask: layer.mask?.enabledImage,
+               let edit = session.transformEdit, !edit.mask, edit.corners != nil,
+               let effects = session.effectsPreviews.preview(for: layer,
+                    // A mask on its own placement, resampled into the layer's grid as the layer draws it.
+                    mask: layer.mask?.clipImage(placement: session.displayedMaskPlacement(for: layer), over: layer.transform,
+                        width: layer.asset?.image.width ?? Int(layer.size.width.rounded()),
+                        height: layer.asset?.image.height ?? Int(layer.size.height.rounded()), limit: 2048),
                     transform: layer.transform, maskPlacement: session.displayedMaskPlacement(for: layer),
                     completion: { [weak self] in self?.needsDisplay = true }),
                let warped = session.distortedEffects(for: layer, effects: effects.image, inset: effects.inset) {
