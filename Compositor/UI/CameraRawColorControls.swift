@@ -117,6 +117,9 @@ struct CameraRawCurveControls: View {
     private func slider(_ title: String, _ key: WritableKeyPath<CameraRawCurveSettings, Double>, _ range: ClosedRange<Double>, _ reset: Double, _ help: String) -> some View {
         HStack {
             Text(title).frame(width: 88, alignment: .leading).help(help)
+                .scrubbable(sensitivity: 1,
+                            value: Binding(get: { raw.curve[keyPath: key] },
+                                           set: { value in update { $0.curve[keyPath: key] = value } }), range: range)
             CameraRawSlider(value: raw.curve[keyPath: key], range: range, track: .plain, help: help,
                             onChange: { value in update { $0.curve[keyPath: key] = value } },
                             onReset: { update { $0.curve[keyPath: key] = reset } })
@@ -273,6 +276,9 @@ struct CameraRawMixerControls: View {
         let help = "\((edit?.cameraRawMixerTab ?? .hue).rawValue) of \(CameraRawMixerSettings.names[index])."
         return HStack {
             Text(CameraRawMixerSettings.names[index]).frame(width: 78, alignment: .leading).help(help)
+                .scrubbable(sensitivity: 1,
+                            value: Binding(get: { raw.mixer[keyPath: key][index] },
+                                           set: { value in update { $0.mixer[keyPath: key][index] = value } }), range: -100...100)
             CameraRawSlider(value: raw.mixer[keyPath: key][index], range: -100...100, track: familyTrack(index, key), help: help,
                             onChange: { value in update { $0.mixer[keyPath: key][index] = value } },
                             onReset: { update { $0.mixer[keyPath: key][index] = 0 } })

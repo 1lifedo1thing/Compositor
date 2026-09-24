@@ -508,6 +508,7 @@ final class CanvasView: NSView {
         if session.tool != .type, textBoxRect != nil { textBoxAnchor = nil; textBoxRect = nil; needsDisplay = true }
         // Image identity detects raster replacement without comparing pixel data.
         let document = session.document
+        let documentPresenceChanged = (displayedState?.documentID != nil) != (document != nil)
         // Folders hold no pixels and so aren't listed below; their opacity reaches the canvas
         // through the layers inside them, which is what has to be watched for a change.
         let opacities = document?.effectiveOpacities ?? [:]
@@ -536,6 +537,10 @@ final class CanvasView: NSView {
             displayedState = state
             changed = true
         }
+        if documentPresenceChanged {
+            updateTrackingAreas()
+            window?.invalidateCursorRects(for: self)
+        }
         if displayedTool != session.tool {
             displayedTool = session.tool
             updateTrackingAreas()
@@ -548,9 +553,10 @@ final class CanvasView: NSView {
             sampleRing.isHidden = true
             updateTrackingAreas()
             window?.invalidateCursorRects(for: self)
-            // Cursor rects only apply when the pointer enters them, so a pointer already over the canvas is set here,
-            // both ways: the eyedropper when picking starts, and the tool's own cursor again when it ends.
-            if let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+            // Cursor rects only apply when the pointer enters them, so update an existing document's
+            // cursor here when picking starts or ends. An empty canvas leaves the form's cursor alone.
+            if session.document != nil, let window,
+               bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
                 if picking { Self.eyedropperCursor.set() } else { restoreToolCursor() }
             }
         }
@@ -646,13 +652,14 @@ final class CanvasView: NSView {
             self.updateBrushCursor()
             // Only while the pointer is over the canvas: rebuilding its cursor rects with the pointer somewhere
             // else (the Layers panel, holding Option for a clipping mask) takes that view's cursor away.
-            if let window = self.window, self.visibleRect.contains(self.convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+            if self.session.document != nil, let window = self.window,
+               self.visibleRect.contains(self.convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
                 self.window?.invalidateCursorRects(for: self)
             }
             self.session.updateHeldSelectionKeys(shift: event.modifierFlags.contains(.shift),
                                                  option: event.modifierFlags.contains(.option))
             if self.session.tool.isSelectionTool { self.refreshLassoCursor(event.modifierFlags) }
-            if self.session.tool == .move, let window = self.window {
+            if self.session.document != nil, self.session.tool == .move, let window = self.window {
                 let point = self.convert(window.mouseLocationOutsideOfEventStream, from: nil)
                 if self.visibleRect.contains(point) { self.updateTransformCursor(at: point, flags: event.modifierFlags) }
             }
@@ -728,6 +735,7 @@ final class CanvasView: NSView {
 
     /// Re-applies the lasso cursor now if the pointer is over the canvas.
     private func refreshLassoCursor(_ flags: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        guard session.document != nil else { return }
         window?.invalidateCursorRects(for: self)
         guard session.tool.isSelectionTool, !spaceHeld, !picking, let window,
               bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
@@ -1270,6 +1278,7 @@ final class CanvasView: NSView {
     }
 
     override func resetCursorRects() {
+        guard session.document != nil else { return }
         if let dragCursor { addCursorRect(bounds, cursor: dragCursor); return }
         if picking { addCursorRect(bounds, cursor: Self.eyedropperCursor); return }
         if session.hueTargeting { addCursorRect(bounds, cursor: .resizeLeftRight); return }
@@ -1294,6 +1303,7 @@ final class CanvasView: NSView {
         super.updateTrackingAreas()
         if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
         hoverTrackingArea = nil
+        guard session.document != nil else { return }
         // Every tool hears the mouse leave, so its cursor never follows it out of the canvas;
         // only tools whose cursor depends on where the pointer is also track movement.
         // The picker panel stays key, so sampling must track while this window is not.
@@ -1395,9 +1405,10 @@ final class CanvasView: NSView {
         updateBrushCursor()
         // Tools set their cursor directly while over the canvas, so put the arrow back on the
         // way out. A drag keeps its cursor until mouse-up.
-        if NSEvent.pressedMouseButtons == 0 { NSCursor.arrow.set() }
+        if session.document != nil, NSEvent.pressedMouseButtons == 0 { NSCursor.arrow.set() }
     }
     override func mouseMoved(with event: NSEvent) {
+        guard session.document != nil else { return }
         if session.filterEdit?.kind == .cameraRaw, let document = session.document {
             let point = convert(event.locationInWindow, from: nil)
             session.updateCameraRawReadout(at: session.viewport.documentPoint(from: point, documentSize: document.size))
@@ -1422,6 +1433,7 @@ final class CanvasView: NSView {
         else { super.mouseMoved(with: event) }
     }
     override func cursorUpdate(with event: NSEvent) {
+        guard session.document != nil else { return }
         if picking { Self.eyedropperCursor.set() }
         else if session.tool.isSelectionTool, !spaceHeld { lassoCursor.set() }
         // Cursor-update events carry no modifier flags (AppKit sends one after every key change), so read
@@ -1430,6 +1442,7 @@ final class CanvasView: NSView {
         else { super.cursorUpdate(with: event) }
     }
     private func updateTransformCursor(at point: CGPoint, flags: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        guard session.document != nil else { return }
         transformCursor(at: point, flags: flags).set()
     }
 
@@ -1631,6 +1644,7 @@ final class CanvasView: NSView {
         }
     }
     override func mouseDragged(with event: NSEvent) {
+        guard session.document != nil else { return }
         let point = convert(event.locationInWindow, from: nil)
         if session.filterEdit?.drawingCameraRawGeometryGuide == true, session.filterEdit?.cameraRawGuideDraft != nil,
            let document = session.document {
@@ -1876,8 +1890,10 @@ final class CanvasView: NSView {
         lastDragPoint = nil
         // Leaving mid-drag keeps the drag's cursor, so a drag released outside the canvas (over
         // the Layers panel, say) must put the arrow back itself.
-        if !visibleRect.contains(convert(event.locationInWindow, from: nil)) { NSCursor.arrow.set() }
-        window?.invalidateCursorRects(for: self)
+        if session.document != nil {
+            if !visibleRect.contains(convert(event.locationInWindow, from: nil)) { NSCursor.arrow.set() }
+            window?.invalidateCursorRects(for: self)
+        }
     }
     override func scrollWheel(with event: NSEvent) {
         guard transformDrag == nil, cropDrag == nil, !guideDragging, session.brushStroke == nil, session.warpStroke == nil else { return }

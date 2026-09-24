@@ -301,6 +301,9 @@ struct CameraRawControls: View {
                 .frame(minWidth: Self.labelWidth, alignment: .leading)
                 .help(help)
                 .onTapGesture(count: 2) { reset(key, to: resetValue) }
+                .scrubbable(sensitivity: 1 / step,
+                            value: Binding(get: { raw[keyPath: key] }, set: { assign(key, $0, clipping: nil) }),
+                            range: range)
             CameraRawSlider(value: raw[keyPath: key], range: range, track: track, help: help,
                             onChange: { rawValue in assign(key, (rawValue * step).rounded() / step, clipping: clipping) },
                             onReset: { reset(key, to: resetValue) })
