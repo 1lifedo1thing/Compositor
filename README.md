@@ -17,8 +17,6 @@ Download the latest version of Compositor in the [releases page.](https://github
 brew install --cask robbietilton-compositor
 ```
 
-Compositor updates itself, so there's nothing else to run after installing.
-
 ## Features
 
 ### Layers
