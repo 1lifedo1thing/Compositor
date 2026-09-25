@@ -13,6 +13,8 @@ struct FilterSheet: View {
     }
 
     private var isCameraRaw: Bool { edit?.kind == .cameraRaw }
+    /// The widest slider title in the panel, so every slider starts and ends in the same place.
+    @State private var labelWidth: CGFloat = 60
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -157,6 +159,7 @@ struct FilterSheet: View {
                     .disabled(edit?.kind.isAutomatic == true && (edit?.preparing == true || edit?.previewError != nil))
             }
         }
+        .onPreferenceChange(LabelWidthKey.self) { labelWidth = max(60, $0) }
         .padding(24)
         .frame(width: isCameraRaw ? FloatingPanelController.dockedWidth : 380)
         .frame(maxHeight: isCameraRaw ? .infinity : nil, alignment: .top)
@@ -195,7 +198,9 @@ struct FilterSheet: View {
         let step = pow(10, Double(decimals))
         let reset = { update { $0 = Self.resetting(key, in: $0) } }
         return HStack(spacing: 10) {
-            Text(title).frame(minWidth: 60, alignment: .leading).fixedSize()
+            Text(title).fixedSize()
+                .background(GeometryReader { Color.clear.preference(key: LabelWidthKey.self, value: $0.size.width) })
+                .frame(width: labelWidth, alignment: .leading)
                 .onTapGesture(count: 2) { if track != nil { reset() } }
                 .scrubbable(sensitivity: 1 / step,
                             value: Binding(get: { settings[keyPath: key] }, set: { value in update { $0[keyPath: key] = value } }),
@@ -261,4 +266,9 @@ struct GradientMapControls: View {
             Text(title)
         }
     }
+}
+
+private struct LabelWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
