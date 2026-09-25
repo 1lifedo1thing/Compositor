@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The open filter's panel: its settings, Preview, and Cancel / OK.
@@ -27,34 +28,35 @@ struct FilterSheet: View {
                                     pick: { session.openGradientMapColorPicker(highlights: $0) })
             case .blackWhite:
                 // Each slider says how bright that family of colors becomes, as Photoshop's do.
-                control("Reds", \.blackWhite.reds, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
-                control("Yellows", \.blackWhite.yellows, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
-                control("Greens", \.blackWhite.greens, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
-                control("Cyans", \.blackWhite.cyans, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
-                control("Blues", \.blackWhite.blues, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
-                control("Magentas", \.blackWhite.magentas, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false)
+                control("Reds", \.blackWhite.reds, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(0))
+                control("Yellows", \.blackWhite.yellows, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(60))
+                control("Greens", \.blackWhite.greens, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(120))
+                control("Cyans", \.blackWhite.cyans, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(180))
+                control("Blues", \.blackWhite.blues, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(240))
+                control("Magentas", \.blackWhite.magentas, range: BlackWhiteSettings.range, unit: "%", decimals: 0, logarithmic: false, track: .luminance(300))
                 Toggle("Tint", isOn: flag(\.blackWhite.tint))
                     .help("Color the result while keeping its tones, for a sepia or a cyanotype")
                 if settings.blackWhite.tint {
-                    control("Hue", \.blackWhite.tintHue, range: 0...360, unit: "°", decimals: 0, logarithmic: false)
-                    control("Saturation", \.blackWhite.tintSaturation, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+                    control("Hue", \.blackWhite.tintHue, range: 0...360, unit: "°", decimals: 0, logarithmic: false, track: .plain)
+                    control("Saturation", \.blackWhite.tintSaturation, range: 0...100, unit: "%", decimals: 0, logarithmic: false,
+                            track: .saturation(settings.blackWhite.tintHue))
                 }
             case .cameraRaw:
                 CameraRawControls(session: session)
                     .frame(maxHeight: .infinity, alignment: .top)
             case .colorBalance:
                 Text("Shadows").font(.headline)
-                control("Cyan / Red", \.colorBalance.shadowCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Magenta / Green", \.colorBalance.shadowMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Yellow / Blue", \.colorBalance.shadowYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
+                control("Cyan / Red", \.colorBalance.shadowCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.cyanRedTrack)
+                control("Magenta / Green", \.colorBalance.shadowMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.magentaGreenTrack)
+                control("Yellow / Blue", \.colorBalance.shadowYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.yellowBlueTrack)
                 Text("Midtones").font(.headline)
-                control("Cyan / Red", \.colorBalance.midCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Magenta / Green", \.colorBalance.midMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Yellow / Blue", \.colorBalance.midYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
+                control("Cyan / Red", \.colorBalance.midCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.cyanRedTrack)
+                control("Magenta / Green", \.colorBalance.midMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.magentaGreenTrack)
+                control("Yellow / Blue", \.colorBalance.midYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.yellowBlueTrack)
                 Text("Highlights").font(.headline)
-                control("Cyan / Red", \.colorBalance.highlightCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Magenta / Green", \.colorBalance.highlightMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
-                control("Yellow / Blue", \.colorBalance.highlightYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false)
+                control("Cyan / Red", \.colorBalance.highlightCyanRed, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.cyanRedTrack)
+                control("Magenta / Green", \.colorBalance.highlightMagentaGreen, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.magentaGreenTrack)
+                control("Yellow / Blue", \.colorBalance.highlightYellowBlue, range: ColorBalanceSettings.range, unit: "", decimals: 0, logarithmic: false, track: Self.yellowBlueTrack)
                 Toggle("Preserve Luminosity", isOn: flag(\.colorBalance.preserveLuminosity))
                     .help("Put each pixel's brightness back afterwards, so only the color moves")
             case .grain:
@@ -172,18 +174,42 @@ struct FilterSheet: View {
         Binding(get: { settings[keyPath: key] }, set: { value in update { $0[keyPath: key] = value } })
     }
 
+    /// The setting put back to its filter's default, as a double-click on a colored slider does.
+    static func resetting(_ key: WritableKeyPath<FilterSettings, Double>, in settings: FilterSettings) -> FilterSettings {
+        var value = settings
+        value[keyPath: key] = FilterSettings()[keyPath: key]
+        return value
+    }
+
+    static let cyanRedTrack = CameraRawSliderTrack.opposing(NSColor(srgbRed: 0.10, green: 0.72, blue: 0.80, alpha: 1),
+                                                            NSColor(srgbRed: 0.86, green: 0.18, blue: 0.20, alpha: 1))
+    static let magentaGreenTrack = CameraRawSliderTrack.opposing(NSColor(srgbRed: 0.80, green: 0.22, blue: 0.70, alpha: 1),
+                                                                 NSColor(srgbRed: 0.24, green: 0.70, blue: 0.30, alpha: 1))
+    static let yellowBlueTrack = CameraRawSliderTrack.opposing(NSColor(srgbRed: 0.95, green: 0.82, blue: 0.18, alpha: 1),
+                                                               NSColor(srgbRed: 0.22, green: 0.40, blue: 0.92, alpha: 1))
+
     /// A slider plus an exact field. Logarithmic sliders give the small values used most most of the travel.
+    /// A colored track draws the slider as Camera Raw's, where a double-click on the title or knob resets it.
     private func control(_ title: String, _ key: WritableKeyPath<FilterSettings, Double>, range: ClosedRange<Double>,
-                         unit: String, decimals: Int, logarithmic: Bool) -> some View {
+                         unit: String, decimals: Int, logarithmic: Bool, track: CameraRawSliderTrack? = nil) -> some View {
         let step = pow(10, Double(decimals))
+        let reset = { update { $0 = Self.resetting(key, in: $0) } }
         return HStack(spacing: 10) {
             Text(title).frame(minWidth: 60, alignment: .leading).fixedSize()
+                .onTapGesture(count: 2) { if track != nil { reset() } }
                 .scrubbable(sensitivity: 1 / step,
                             value: Binding(get: { settings[keyPath: key] }, set: { value in update { $0[keyPath: key] = value } }),
                             range: range)
-            Slider(value: Binding(get: { logarithmic ? log(settings[keyPath: key]) : settings[keyPath: key] },
-                                  set: { value in update { $0[keyPath: key] = ((logarithmic ? exp(value) : value) * step).rounded() / step } }),
-                   in: logarithmic ? log(range.lowerBound)...log(range.upperBound) : range)
+            if let track {
+                CameraRawSlider(value: settings[keyPath: key], range: range, track: track,
+                                help: "\(title). Double-click to reset.",
+                                onChange: { value in update { $0[keyPath: key] = (value * step).rounded() / step } },
+                                onReset: reset)
+            } else {
+                Slider(value: Binding(get: { logarithmic ? log(settings[keyPath: key]) : settings[keyPath: key] },
+                                      set: { value in update { $0[keyPath: key] = ((logarithmic ? exp(value) : value) * step).rounded() / step } }),
+                       in: logarithmic ? log(range.lowerBound)...log(range.upperBound) : range)
+            }
             TextField(title, value: Binding(get: { settings[keyPath: key] }, set: { value in update { $0[keyPath: key] = value } }),
                       format: .number.precision(.fractionLength(0...decimals)))
                 .frame(width: 56).textFieldStyle(.roundedBorder).multilineTextAlignment(.trailing)
