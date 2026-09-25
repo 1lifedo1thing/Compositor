@@ -104,7 +104,14 @@ final class ProjectWorkspace {
     /// The order Quit (and closing the window) asks about unsaved projects: the tab on screen first,
     /// then the rest left to right, so it never jumps to another project before the one you're viewing.
     var quitOrder: [ProjectTab] { [current] + tabs.filter { $0.id != current.id } }
+    private func finishTextEditing() -> Bool {
+        for tab in quitOrder where tab.session.textDraft != nil {
+            guard tab.session.finishText() else { return false }
+        }
+        return true
+    }
     func confirmQuit() async -> Bool {
+        guard finishTextEditing() else { return false }
         guard canSwitch else { return false }
         isManaging = true; defer { isManaging = false }
         for tab in quitOrder {
