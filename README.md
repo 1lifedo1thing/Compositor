@@ -8,8 +8,8 @@ Because it’s open source, you can download the Xcode project and add, remove, 
 
 ## Installation
 
-### GitHub Releases
-Download the latest version of Compositor in the [releases page.](https://github.com/robbietilton/Compositor/releases/latest)
+### Download
+Get Compositor from [robbietilton.com/compositor](https://robbietilton.com/compositor), or download the latest release directly from [GitHub Releases](https://github.com/robbietilton/Compositor/releases/latest).
 
 ### Homebrew
 
