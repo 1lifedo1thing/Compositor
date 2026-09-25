@@ -67,10 +67,12 @@ extension EditorSession {
     }
     /// What the Type bar's swatch shows and edits: the text being edited, otherwise the foreground color the next
     /// text will use. A text layer that is only selected is not touched.
-    /// With letters selected, it is the color of the first of them.
+    /// With letters selected, it is the color of the first of them; with just a caret, the letter before it, the
+    /// color typing there gives.
     var typeColor: PaletteColor {
         guard let draft = textDraft else { return foregroundColor }
-        return draft.style.color(at: draft.selection.length > 0 ? draft.selection.location : 0)
+        let selection = draft.selection
+        return draft.style.color(at: selection.length > 0 ? selection.location : max(0, selection.location - 1))
     }
     func openTextColorPicker() {
         guard canEditPalette, colorPicker == nil, tool == .type else { return }

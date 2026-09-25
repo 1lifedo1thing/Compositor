@@ -4,6 +4,15 @@ import AppKit
 /// stay with NSTextView. Its logical bounds are layer pixels; the containing view supplies zoom.
 /// Its glyphs are clear: the canvas draws the text as the layer's own pixels underneath, as Photoshop does, so
 /// what is typed looks the same at any zoom as it will once it is committed.
+/// Draws text selections translucent, focused or not.
+private final class SeeThroughSelectionLayout: NSLayoutManager {
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
+                                          forCharacterRange charRange: NSRange, color: NSColor) {
+        color.withAlphaComponent(min(color.alphaComponent, 0.45)).setFill()
+        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
+    }
+}
+
 final class CanvasTextView: NSTextView {
     weak var editor: InlineTextEditor?
     private let textUndo = UndoManager()
@@ -81,8 +90,10 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
         textView.textContainer?.heightTracksTextView = true
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
-        // The selection shows through to the text the canvas draws beneath it.
+        // The selection shows through to the text the canvas draws beneath it, also while another window (the color
+        // picker previewing the selected letters) has focus, where AppKit would otherwise paint it solid gray.
         textView.selectedTextAttributes = [.backgroundColor: NSColor.selectedTextBackgroundColor.withAlphaComponent(0.45)]
+        textView.textContainer?.replaceLayoutManager(SeeThroughSelectionLayout())
         textView.setAccessibilityLabel("Canvas text")
         // Both backed by layers from the start. Left to AppKit, the text surface's layer is first placed in the
         // canvas's own layer tree and only moved inside this view a frame later; with a flipped layer, whose
