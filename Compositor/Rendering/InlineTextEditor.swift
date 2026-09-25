@@ -44,6 +44,8 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
     let textView = CanvasTextView(frame: .zero)
     fileprivate var draftID: UUID?
     private var shownStyle: LayerTextStyle?
+    /// The style after an edit NSTextView has accepted but not yet made, with its color runs moved to fit.
+    private var pendingStyle: LayerTextStyle?
     private var synchronizing = false
     private var logicalSize = CGSize(width: 360, height: 160)
     private var handleSize: CGFloat = 6
@@ -154,7 +156,6 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
             let selection = textView.selectedRange()
             if textView.string != style.content { textView.string = style.content }
             var attributes = EditorSession.textAttributes(style)
-            textView.insertionPointColor = (attributes[.foregroundColor] as? NSColor) ?? .white
             attributes[.foregroundColor] = NSColor.clear
             textView.typingAttributes = attributes
             if !textView.hasMarkedText() {
@@ -163,6 +164,7 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
                     length: min(selection.length, max(0, textView.string.utf16.count - selection.location))))
             }
             shownStyle = style
+            updateInsertionPointColor(style)
             synchronizing = false
             needsDisplay = true
         }
@@ -183,7 +185,12 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
 
     func textDidChange(_ notification: Notification) {
         guard !synchronizing, let session = canvas?.session, var draft = session.textDraft else { return }
+        if let pendingStyle, pendingStyle.content == textView.string { draft.style.colorRuns = pendingStyle.colorRuns }
+        pendingStyle = nil
         draft.style.content = textView.string
+        // Text NSTextView changed without saying how can't keep its colors letter for letter.
+        if !draft.style.isValid { draft.style.colorRuns = nil }
+        draft.selection = textView.selectedRange()
         shownStyle = draft.style
         session.textDraft = draft
         // NSTextView draws the changed glyphs itself. Refresh the box's overflow marker
@@ -191,7 +198,27 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
         needsDisplay = true
     }
     func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        textView.string.utf16.count - affectedCharRange.length + (replacementString?.utf16.count ?? 0) <= 100_000
+        let length = replacementString?.utf16.count ?? 0
+        guard textView.string.utf16.count - affectedCharRange.length + length <= 100_000 else { return false }
+        if !synchronizing, let draft = canvas?.session.textDraft, draft.style.colorRuns != nil {
+            var style = pendingStyle ?? draft.style
+            guard NSMaxRange(affectedCharRange) <= style.content.utf16.count else { return true }
+            style.replaceCharacters(in: affectedCharRange, withLength: length)
+            style.content = (style.content as NSString).replacingCharacters(in: affectedCharRange, with: replacementString ?? "")
+            pendingStyle = style
+        }
+        return true
+    }
+    func textViewDidChangeSelection(_ notification: Notification) {
+        guard !synchronizing, let session = canvas?.session, session.textDraft?.id == draftID else { return }
+        let selection = textView.selectedRange()
+        if session.textDraft?.selection != selection { session.textDraft?.selection = selection }
+        if let style = session.textDraft?.style { updateInsertionPointColor(style) }
+    }
+    private func updateInsertionPointColor(_ style: LayerTextStyle) {
+        let location = textView.selectedRange().location
+        let color = style.color(at: location > 0 ? location - 1 : 0)
+        textView.insertionPointColor = NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: 1)
     }
 
     private var handleTracking: NSTrackingArea?
