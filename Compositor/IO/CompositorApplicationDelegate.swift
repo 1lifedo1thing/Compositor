@@ -36,7 +36,8 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard workspace.canSwitch else { return .terminateCancel }
+        let textEditing = workspace.quitOrder.contains { $0.session.textDraft != nil }
+        guard workspace.canSwitch || textEditing else { return .terminateCancel }
         Task { sender.reply(toApplicationShouldTerminate: await workspace.confirmQuit()) }
         return .terminateLater
     }

@@ -11,6 +11,11 @@ struct TypeToolTests {
         return session
     }
 
+    private func beginEditingText(in session: EditorSession) {
+        session.beginText(at: CGPoint(x: 100, y: 100))
+        session.textDraft?.style.content = "Editing"
+    }
+
     @Test func createEditCancelAndUndo() throws {
         let session = makeSession()
         let before = session.history.undoCount
@@ -183,6 +188,108 @@ struct TypeToolTests {
         session.selectTool(.brush)
         #expect(session.document?.layers.count == count)
         #expect(session.textDraft == nil)
+    }
+
+    @Test func closeButtonShouldCloseWindowWhileEditingText() async throws {
+        let workspace = ProjectWorkspace()
+        let session = workspace.current.session
+        session.createDocument(width: 800, height: 600, emptyLayer: true)
+        session.selectTool(.type)
+        beginEditingText(in: session)
+
+        let bridge = ProjectWindowView(controller: workspace.current.controller)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.contentView = bridge
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        window.standardWindowButton(.closeButton)?.performClick(nil)
+        var alertWindow: NSWindow?
+        for _ in 0..<20 where alertWindow == nil {
+            alertWindow = window.attachedSheet
+            if alertWindow == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let sheet = try #require(alertWindow)
+        func button(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == "Don’t Save" { return button }
+            for child in view.subviews {
+                if let button = button(in: child) { return button }
+            }
+            return nil
+        }
+        let contentView = try #require(sheet.contentView)
+        let discard = try #require(button(in: contentView))
+        discard.performClick(nil)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(!window.isVisible)
+        #expect(session.textDraft == nil)
+    }
+
+    @Test func commandQShouldTerminateWhileEditingText() async throws {
+        let delegate = CompositorApplicationDelegate()
+        let session = delegate.session
+        session.createDocument(width: 800, height: 600, emptyLayer: true)
+        session.selectTool(.type)
+        beginEditingText(in: session)
+
+        let bridge = ProjectWindowView(controller: delegate.projects)
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.contentView = bridge
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        delegate.workspace.window = window
+        delegate.projects.window = window
+        let quitTask = Task { await delegate.workspace.confirmQuit() }
+        var alertWindow: NSWindow?
+        for _ in 0..<20 where alertWindow == nil {
+            alertWindow = window.attachedSheet
+            if alertWindow == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let sheet = try #require(alertWindow)
+        func button(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == "Don’t Save" { return button }
+            for child in view.subviews {
+                if let button = button(in: child) { return button }
+            }
+            return nil
+        }
+        let contentView = try #require(sheet.contentView)
+        let discard = try #require(button(in: contentView))
+        discard.performClick(nil)
+        #expect(await quitTask.value)
+
+        #expect(window.attachedSheet == nil)
+        #expect(session.textDraft == nil)
+    }
+
+    /// While text is open, the Type tool keeps its I-beam over the canvas, and the pointer goes back to the arrow, shown
+    /// again, once it leaves the canvas for the toolbar. Tested on the view alone: no second window in the test host.
+    @Test func theCursorFollowsThePointerWhileEditingText() throws {
+        let session = makeSession()
+        session.beginText(at: CGPoint(x: 20, y: 20))
+        let view = CanvasView(session: session)
+        view.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        view.synchronizeDisplay()
+        let editor = try #require(view.inlineTextEditor)
+        func move(to point: NSPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                            context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        }
+        defer { NSCursor.arrow.set() }
+
+        NSCursor.arrow.set()
+        editor.pointerMoved(try move(to: NSPoint(x: 780, y: 580)))
+        #expect(NSCursor.current === NSCursor.iBeam, "over the canvas, away from the box, the Type tool's I-beam")
+
+        NSCursor.setHiddenUntilMouseMoves(true)
+        editor.pointerMoved(try move(to: NSPoint(x: -10, y: -10)))
+        #expect(NSCursor.current === NSCursor.arrow, "off the canvas, the arrow")
     }
 
     @Test func invalidAndStaleDraftsDoNotChangeDocument() throws {
