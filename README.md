@@ -14,12 +14,10 @@ Download the latest version of Compositor in the [releases page.](https://github
 ### Homebrew
 
 ```sh
-# To install compositor
 brew install --cask robbietilton-compositor
-
-# Upgrade compositor
-brew update && brew upgrade --cask robbietilton-compositor
 ```
+
+Compositor updates itself, so there's nothing else to run after installing.
 
 ## Features
 
