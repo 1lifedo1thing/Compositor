@@ -39,6 +39,25 @@ extension EditorSession {
         viewport.fit(documentSize: document!.size)
     }
 
+    /// Replaces the document with what its package holds now, after something else wrote it. Unlike `installProject`
+    /// it keeps the viewport, the collapsed folders and the selection where those layers still exist, so the
+    /// reload is invisible beyond the change itself. Undo history is session-only and starts over, as after an open.
+    func reloadProject(_ snapshot: ProjectSnapshot) {
+        guard let url = projectURL else { return }
+        let viewport = self.viewport
+        let collapsed = collapsedGroupIDs
+        let active = activeLayerID
+        let selected = selectedLayerIDs
+        installProject(snapshot, from: url)
+        self.viewport = viewport
+        let ids = Set(snapshot.manifest.layers.map(\.id))
+        collapsedGroupIDs = collapsed.intersection(ids)
+        if let active, ids.contains(active) {
+            activeLayerID = active
+            selectedLayerIDs = selected.intersection(ids).union([active])
+        }
+    }
+
     func clearProject() {
         collapsedGroupIDs = []
         isMaskSelected = false

@@ -49,6 +49,7 @@ final class ProjectWorkspace {
         current.session.commitTransform()
         selectedID = id
         current.controller.window = window
+        current.controller.resumeExternalChangeCheck()
     }
     func newCanvas() {
         guard canSwitch else { return }

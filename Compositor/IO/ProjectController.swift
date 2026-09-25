@@ -8,6 +8,8 @@ final class ProjectController {
     weak var window: NSWindow?
     weak var workspace: ProjectWorkspace?
     private var saveGeneration = 0
+    /// Keeps the document in step with its package when something else writes it. See ProjectController+ExternalChanges.
+    let externalChanges = ExternalChangeState()
     var canStart: Bool {
         session.canStartProjectOperation && workspace?.isManaging != true
     }
@@ -168,12 +170,17 @@ final class ProjectController {
         guard let destination else { return false }
         let scoped = destination.startAccessingSecurityScopedResource()
         defer { if scoped { destination.stopAccessingSecurityScopedResource() } }
+        // Our own save changes the package too; the watch ignores events until the saved bytes are remembered.
+        externalChanges.saving = true
+        defer { externalChanges.saving = false }
         do {
             try await ProjectStore.shared.save(snapshot, to: destination)
             session.projectURL = destination
             session.history.markSaved()
             saveGeneration += 1
             NSDocumentController.shared.noteNewRecentDocumentURL(destination)
+            await rememberProjectDigest(for: destination)
+            watchProject(at: destination)
             return true
         } catch {
             await showError("Couldn’t save the project", error: error)
@@ -215,6 +222,8 @@ final class ProjectController {
             }
             session.installProject(snapshot, from: source)
             NSDocumentController.shared.noteNewRecentDocumentURL(source)
+            await rememberProjectDigest(for: source)
+            watchProject(at: source)
             return true
         } catch {
             await showError("Couldn’t open the project", error: error)
@@ -227,7 +236,7 @@ final class ProjectController {
         guard begin() else { return }
         let proceed = await confirmReplacement()
         session.isProjectBusy = false
-        if proceed { session.clearProject() }
+        if proceed { session.clearProject(); stopWatchingProject() }
     }
 
     func close(_ window: NSWindow) async {
@@ -239,6 +248,7 @@ final class ProjectController {
         session.isProjectBusy = false
         if proceed {
             session.clearProject()
+            stopWatchingProject()
             window.close()
         }
     }
