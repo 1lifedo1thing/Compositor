@@ -22,6 +22,8 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Always dark, alerts and open/save panels included, whatever the Mac is set to.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         // Slider knobs snap to a click on the track instead of gliding there.
         SliderSnap.install()
     }
