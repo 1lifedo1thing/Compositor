@@ -55,6 +55,18 @@ struct CompositorApp: App {
                         Task { await applicationDelegate.projects.open() }
                     }
                         .configuredKeyboardShortcut("o").disabled(!applicationDelegate.projects.canStart)
+                    Menu("Open Recent") {
+                        ForEach(RecentProjects.shared.urls, id: \.self) { url in
+                            Button(url.deletingPathExtension().lastPathComponent) {
+                                applicationDelegate.showEditor?()
+                                Task { await applicationDelegate.projects.open(url) }
+                            }
+                        }
+                        Divider()
+                        Button("Clear Menu") { RecentProjects.shared.clear() }
+                            .disabled(RecentProjects.shared.urls.isEmpty)
+                    }
+                        .disabled(!applicationDelegate.projects.canStart)
                     Button("Import Images…") { session.showsImporter = true }
                         .disabled(session.levels != nil || session.showsBusy || session.isImporting || session.showsNewDocument)
                 }

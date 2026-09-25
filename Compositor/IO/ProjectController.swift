@@ -203,7 +203,7 @@ final class ProjectController {
                 session.projectURL = destination
                 session.history.markSaved(revision)
                 saveGeneration += 1
-                NSDocumentController.shared.noteNewRecentDocumentURL(destination)
+                RecentProjects.shared.note(destination)
                 await rememberProjectDigest(for: destination)
                 watchProject(at: destination)
                 return true
@@ -238,6 +238,12 @@ final class ProjectController {
             source = url
         }
         guard let source else { return false }
+        // A recent project deleted in Finder: name the project, not the manifest inside it the load would miss.
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            RecentProjects.shared.refresh()
+            await showError("Couldn’t open the project", error: CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: source.path]))
+            return false
+        }
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         do {
@@ -251,7 +257,7 @@ final class ProjectController {
                 snapshot = try await ProjectStore.shared.load(from: source)
             }
             session.installProject(snapshot, from: source)
-            NSDocumentController.shared.noteNewRecentDocumentURL(source)
+            RecentProjects.shared.note(source)
             await rememberProjectDigest(for: source)
             watchProject(at: source)
             return true
