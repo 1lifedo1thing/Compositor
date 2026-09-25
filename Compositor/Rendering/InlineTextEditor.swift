@@ -33,6 +33,10 @@ final class CanvasTextView: NSTextView {
         // Text views hide the pointer while typing; on the canvas it stays, so you can see where you'll click next.
         NSCursor.setHiddenUntilMouseMoves(false)
     }
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.setHiddenUntilMouseMoves(false)
+        NSCursor.arrow.set()
+    }
     override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
     // The editor sets the cursor for the whole box — the I-beam over the text, resize arrows over the edges.
     override func resetCursorRects() {}
@@ -242,28 +246,19 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
     override func mouseEntered(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
     override func mouseMoved(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
     override func cursorUpdate(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
-    override func mouseExited(with event: NSEvent) { NSCursor.iBeam.set() }
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.setHiddenUntilMouseMoves(false)
+        NSCursor.arrow.set()
+    }
     private func showCursor(at point: CGPoint) {
+        guard bounds.insetBy(dx: -edgeReach, dy: -edgeReach).contains(point) else {
+            NSCursor.setHiddenUntilMouseMoves(false)
+            NSCursor.arrow.set()
+            return
+        }
         guard resize == nil, canvas?.session.colorPicker == nil else { return }
         guard let index = handle(at: point) else { NSCursor.iBeam.set(); return }
         handleCursor(index).set()
-    }
-
-    /// Every mouse move while the box is open, wherever the pointer is. Tracking areas stop arriving once the text
-    /// surface has the mouse, which left the cursor stuck on whatever it was last set to.
-    private var moveMonitor: Any?
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if let moveMonitor { NSEvent.removeMonitor(moveMonitor); self.moveMonitor = nil }
-        guard window != nil else { return }
-        moveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
-            guard let self, self.window === event.window else { return event }
-            self.showCursor(at: self.convert(event.locationInWindow, from: nil))
-            return event
-        }
-    }
-    deinit {
-        if let moveMonitor { NSEvent.removeMonitor(moveMonitor) }
     }
 
     /// The arrows for the edge or corner a handle resizes, turned with the text box.
