@@ -129,6 +129,8 @@ extension EditorSession {
             }
         }
         colorPicker = nil
+        // Sampling clicked the canvas, which took the keys from the text: give them back.
+        if textDraft != nil { canvasFocusRequest += 1 }
     }
     /// Opens the app's color picker on one end of the Gradient Map being edited (Shadows or Highlights).
     func openGradientMapColorPicker(highlights: Bool) {
