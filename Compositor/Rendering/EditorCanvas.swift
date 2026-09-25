@@ -1405,7 +1405,10 @@ final class CanvasView: NSView {
         updateBrushCursor()
         // Tools set their cursor directly while over the canvas, so put the arrow back on the
         // way out. A drag keeps its cursor until mouse-up.
-        if session.document != nil, NSEvent.pressedMouseButtons == 0 { NSCursor.arrow.set() }
+        if session.document != nil, NSEvent.pressedMouseButtons == 0 {
+            NSCursor.setHiddenUntilMouseMoves(false)
+            NSCursor.arrow.set()
+        }
     }
     override func mouseMoved(with event: NSEvent) {
         guard session.document != nil else { return }
