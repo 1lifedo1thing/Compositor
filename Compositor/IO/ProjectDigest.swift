@@ -1,9 +1,13 @@
 import CryptoKit
 import Foundation
 
-/// A fingerprint of what a project package contains: the manifest and every asset, byte for byte. A package that
-/// was only touched (a sync client rewriting metadata, a permission change, the same bytes saved again) has the
-/// same digest as before, so it is not treated as a change.
+/// A fingerprint of what a project package contains: the manifest byte for byte, and each asset's name and size. A
+/// package that was only touched (a sync client rewriting metadata, a permission change, the same bytes saved again)
+/// has the same digest as before, so it is not treated as a change.
+///
+/// Assets are not read: every save and open takes a fresh digest, and hashing every image of a large project would
+/// hold each save for seconds. Anything that edits a project rewrites its manifest, and a PNG whose pixels change
+/// all but always changes size, so names and sizes catch the rest from the file system alone.
 nonisolated struct ProjectDigest: Equatable, Sendable {
     let value: Data
 
@@ -17,13 +21,11 @@ nonisolated struct ProjectDigest: Equatable, Sendable {
         let images = url.appendingPathComponent("images", isDirectory: true)
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? []).sorted()
         for name in names {
-            let file = images.appendingPathComponent(name)
-            guard try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            let values = try images.appendingPathComponent(name).resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values.isRegularFile == true else { continue }
             hasher.update(data: Data(name.utf8))
-            let data = try Data(contentsOf: file, options: .mappedIfSafe)
-            var count = UInt64(data.count)
+            var count = UInt64(values.fileSize ?? 0)
             hasher.update(bufferPointer: UnsafeRawBufferPointer(start: &count, count: MemoryLayout<UInt64>.size))
-            hasher.update(data: data)
         }
         return ProjectDigest(value: Data(hasher.finalize()))
     }
