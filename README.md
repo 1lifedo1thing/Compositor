@@ -6,6 +6,21 @@ The goal was to create a full-featured image editor that is completely free and 
 
 Because it’s open source, you can download the Xcode project and add, remove, or modify any feature to fit your workflow.
 
+## Installation
+
+### Github Releases
+Download the latest version of Compositor in the [releases page.](https://github.com/robbietilton/Compositor/releases/latest)
+
+### Homebrew
+
+```sh
+# To install compositor
+brew install --cask robbietilton-compositor
+
+# Upgrade compositor
+brew update && brew upgrade --cask robbietilton-compositor
+```
+
 ## Features
 
 ### Layers
