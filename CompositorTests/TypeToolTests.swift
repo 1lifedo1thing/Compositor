@@ -268,30 +268,28 @@ struct TypeToolTests {
         #expect(session.textDraft == nil)
     }
 
-    @Test func leavingInlineTextEditorRestoresTheArrowCursor() throws {
+    /// While text is open, the Type tool keeps its I-beam over the canvas, and the pointer goes back to the arrow, shown
+    /// again, once it leaves the canvas for the toolbar. Tested on the view alone: no second window in the test host.
+    @Test func theCursorFollowsThePointerWhileEditingText() throws {
         let session = makeSession()
-        session.beginText(at: CGPoint(x: 100, y: 100))
+        session.beginText(at: CGPoint(x: 20, y: 20))
         let view = CanvasView(session: session)
-        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
-        window.contentView = view
+        view.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
         view.synchronizeDisplay()
         let editor = try #require(view.inlineTextEditor)
-        let event = try #require(NSEvent.mouseEvent(with: .mouseMoved, location: NSPoint(x: -10, y: -10),
-                                                    modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                                                    context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        func move(to point: NSPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                            context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        }
         defer { NSCursor.arrow.set() }
 
-        NSCursor.iBeam.set()
-        NSCursor.setHiddenUntilMouseMoves(true)
-        editor.textView.mouseExited(with: event)
-        #expect(NSCursor.current === NSCursor.arrow)
+        NSCursor.arrow.set()
+        editor.pointerMoved(try move(to: NSPoint(x: 780, y: 580)))
+        #expect(NSCursor.current === NSCursor.iBeam, "over the canvas, away from the box, the Type tool's I-beam")
 
-        NSCursor.iBeam.set()
         NSCursor.setHiddenUntilMouseMoves(true)
-        editor.mouseExited(with: event)
-
-        #expect(NSCursor.current === NSCursor.arrow)
+        editor.pointerMoved(try move(to: NSPoint(x: -10, y: -10)))
+        #expect(NSCursor.current === NSCursor.arrow, "off the canvas, the arrow")
     }
 
     @Test func invalidAndStaleDraftsDoNotChangeDocument() throws {

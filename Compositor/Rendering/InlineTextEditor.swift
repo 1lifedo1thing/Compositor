@@ -33,10 +33,7 @@ final class CanvasTextView: NSTextView {
         // Text views hide the pointer while typing; on the canvas it stays, so you can see where you'll click next.
         NSCursor.setHiddenUntilMouseMoves(false)
     }
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.setHiddenUntilMouseMoves(false)
-        NSCursor.arrow.set()
-    }
+    override func mouseExited(with event: NSEvent) { NSCursor.setHiddenUntilMouseMoves(false) }
     override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
     // The editor sets the cursor for the whole box — the I-beam over the text, resize arrows over the edges.
     override func resetCursorRects() {}
@@ -246,10 +243,7 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
     override func mouseEntered(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
     override func mouseMoved(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
     override func cursorUpdate(with event: NSEvent) { showCursor(at: convert(event.locationInWindow, from: nil)) }
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.setHiddenUntilMouseMoves(false)
-        NSCursor.arrow.set()
-    }
+    override func mouseExited(with event: NSEvent) { NSCursor.setHiddenUntilMouseMoves(false) }
     private func showCursor(at point: CGPoint) {
         guard bounds.insetBy(dx: -edgeReach, dy: -edgeReach).contains(point) else {
             NSCursor.setHiddenUntilMouseMoves(false)
@@ -259,6 +253,41 @@ final class InlineTextEditor: NSView, NSTextViewDelegate {
         guard resize == nil, canvas?.session.colorPicker == nil else { return }
         guard let index = handle(at: point) else { NSCursor.iBeam.set(); return }
         handleCursor(index).set()
+    }
+
+    /// Every mouse move while the box is open, wherever the pointer is. Tracking areas stop arriving once the text
+    /// surface has the mouse, which left the cursor stuck on whatever it was last set to. Inside the box it's the
+    /// I-beam or a resize arrow; over the rest of the canvas, the Type tool's I-beam; leaving the canvas, the arrow,
+    /// set once on the way out so the toolbar's own controls keep their cursors.
+    private var moveMonitor: Any?
+    private var pointerOnCanvas = true
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let moveMonitor { NSEvent.removeMonitor(moveMonitor); self.moveMonitor = nil }
+        guard window != nil else { return }
+        moveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            guard let self, self.window === event.window else { return event }
+            self.pointerMoved(event)
+            return event
+        }
+    }
+    deinit {
+        if let moveMonitor { NSEvent.removeMonitor(moveMonitor) }
+    }
+    func pointerMoved(_ event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if bounds.insetBy(dx: -edgeReach, dy: -edgeReach).contains(point) {
+            pointerOnCanvas = true
+            showCursor(at: point)
+        } else if let canvas, canvas.bounds.contains(canvas.convert(event.locationInWindow, from: nil)) {
+            pointerOnCanvas = true
+            guard resize == nil, canvas.session.colorPicker == nil else { return }
+            NSCursor.iBeam.set()
+        } else if pointerOnCanvas {
+            pointerOnCanvas = false
+            NSCursor.setHiddenUntilMouseMoves(false)
+            NSCursor.arrow.set()
+        }
     }
 
     /// The arrows for the edge or corner a handle resizes, turned with the text box.
