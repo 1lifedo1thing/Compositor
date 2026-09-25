@@ -159,7 +159,11 @@ actor ProjectStore {
             let file = url.appendingPathComponent("images").appendingPathComponent(filename)
             try checkFile(file, inside: url, maximumBytes: 512 * 1024 * 1024)
             let asset = try autoreleasepool {
-                guard let source = CGImageSourceCreateWithURL(file as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+                // Decoded from the file's bytes in memory, not from the file: an image made from a file source stays tied
+                // to it, and the next save replaces that file (ImageIO: "mmapped file changed"), so an image kept for undo
+                // could later read someone else's pixels.
+                let bytes = try Data(contentsOf: file)
+                guard let source = CGImageSourceCreateWithData(bytes as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
                       CGImageSourceGetType(source) as String? == UTType.png.identifier,
                       CGImageSourceGetCount(source) == 1,
                       let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
