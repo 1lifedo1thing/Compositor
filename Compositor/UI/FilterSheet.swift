@@ -189,9 +189,15 @@ struct FilterSheet: View {
                 ForEach(DitherStyle.groups[group], id: \.self) { Text($0.rawValue).tag($0) }
             }
         }
+        if dither.style != .ascii {
         control("Pixel Size", \.dither.pixelSize, range: DitherSettings.pixelSizeRange, unit: "px", decimals: 0, logarithmic: false)
             .help("Make each dithered pixel this many pixels across, for a chunky old-screen look")
-        if dither.style.isHalftone || dither.style == .ascii {
+        }
+        if dither.style == .ascii {
+            control("Text Size", \.dither.textSize, range: DitherSettings.textSizeRange, unit: "px", decimals: 0, logarithmic: false)
+                .help("The height of each line of characters")
+        }
+        if dither.style.isHalftone {
             control("Cell Size", \.dither.cellSize, range: DitherSettings.cellSizeRange, unit: "px", decimals: 0, logarithmic: false)
         }
         if dither.style.isHalftone {
@@ -231,7 +237,7 @@ struct FilterSheet: View {
                 Spacer()
             }
         }
-        if dither.pixelSize > 1 {
+        if dither.pixelSize > 1, dither.style != .ascii {
             Picker("Pixel Shape", selection: Binding(get: { dither.pixelShape }, set: { new in update { $0.dither.pixelShape = new } })) {
                 ForEach(DitherPixelShape.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }

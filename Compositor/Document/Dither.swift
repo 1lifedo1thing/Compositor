@@ -46,6 +46,7 @@ nonisolated enum DitherColors: String, CaseIterable, Sendable {
 nonisolated struct DitherSettings: Equatable, Sendable {
     static let pixelSizeRange: ClosedRange<Double> = 1...32
     static let cellSizeRange: ClosedRange<Double> = 4...64
+    static let textSizeRange: ClosedRange<Double> = 6...64
     static let levelsRange: ClosedRange<Double> = 2...8
     static let defaultCharacters = " .:-=+*#%@"
     var style: DitherStyle = .atkinson
@@ -54,6 +55,8 @@ nonisolated struct DitherSettings: Equatable, Sendable {
     var pixelShape: DitherPixelShape = .square
     /// Halftone screen and character cells, in dithered pixels.
     var cellSize: Double = 8
+    /// ASCII's line height in layer pixels; the characters are about six tenths as wide.
+    var textSize: Double = 14
     /// Halftone screen angle in degrees.
     var angle: Double = 45
     /// Tones per channel for diffusion and ordered styles; 2 is 1-bit.
@@ -76,6 +79,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
         var result = self
         result.pixelSize = ImageAdjustmentPixels.clamp(pixelSize, Self.pixelSizeRange, 2).rounded()
         result.cellSize = ImageAdjustmentPixels.clamp(cellSize, Self.cellSizeRange, 8).rounded()
+        result.textSize = ImageAdjustmentPixels.clamp(textSize, Self.textSizeRange, 14).rounded()
         result.angle = ImageAdjustmentPixels.clamp(angle, -90...90, 45)
         result.levels = ImageAdjustmentPixels.clamp(levels, Self.levelsRange, 2).rounded()
         result.diffusion = ImageAdjustmentPixels.clamp(diffusion, 0...100, 100)
@@ -89,7 +93,8 @@ nonisolated struct DitherSettings: Equatable, Sendable {
 
     func apply(_ image: CGImage) throws -> CGImage {
         let settings = normalized
-        let block = Int(settings.pixelSize)
+        // ASCII draws its characters at full resolution: shrinking the image first would blur and break them up.
+        let block = settings.style == .ascii ? 1 : Int(settings.pixelSize)
         // Chunky pixels: dither a copy averaged down by the pixel size, then blow it back up without smoothing.
         var working = image
         if block > 1 {
@@ -125,7 +130,8 @@ nonisolated struct DitherSettings: Equatable, Sendable {
 
     private func dither(_ image: CGImage) throws -> CGImage {
         let cell = Int(cellSize)
-        let glyphs: (maps: [UInt8], coverage: [Float]) = style == .ascii ? Self.glyphs(characters.isEmpty ? Self.defaultCharacters : characters, cell: cell) : ([], [])
+        let glyphs: (maps: [UInt8], coverage: [Float], width: Int, height: Int) = style == .ascii
+            ? Self.glyphs(characters.isEmpty ? Self.defaultCharacters : characters, lineHeight: Int(textSize)) : ([], [], 1, 1)
         func bytes(_ color: AdjustmentColor) -> (UInt8, UInt8, UInt8) {
             (UInt8((color.red * 255).rounded()), UInt8((color.green * 255).rounded()), UInt8((color.blue * 255).rounded()))
         }
@@ -138,7 +144,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
                                               density: Float(density / 100), contrast: Float(contrast / 100), cell: Int32(cell),
                                               angle: Float(angle * .pi / 180), lightOnDark: lightOnDark ? 1 : 0,
                                               originalColors: colors == .original ? 1 : 0, dark: darkColor, light: lightColor,
-                                              glyphs: maps.baseAddress, glyphCoverage: coverage.baseAddress,
+                                              glyphWidth: Int32(glyphs.width), glyphHeight: Int32(glyphs.height), glyphs: maps.baseAddress, glyphCoverage: coverage.baseAddress,
                                               glyphCount: Int32(coverage.count))
                     failed = dither_apply(pixels, width, height, stride, &params) == 0
                 }
@@ -148,28 +154,29 @@ nonisolated struct DitherSettings: Equatable, Sendable {
         return result
     }
 
-    /// Each distinct character drawn into a `cell` × `cell` coverage map, sorted from least ink to most.
-    private static func glyphs(_ characters: String, cell: Int) -> (maps: [UInt8], coverage: [Float]) {
-        let font = NSFont.monospacedSystemFont(ofSize: CGFloat(cell) * 1.15, weight: .bold)
+    /// Each distinct character drawn into a cell of monospaced text, `lineHeight` tall and one character wide, on a
+    /// shared baseline as a terminal lays them out, sorted from least ink to most.
+    private static func glyphs(_ characters: String, lineHeight: Int) -> (maps: [UInt8], coverage: [Float], width: Int, height: Int) {
+        let font = NSFont.monospacedSystemFont(ofSize: CGFloat(lineHeight) / 1.2, weight: .bold)
+        let height = lineHeight
+        let width = max(1, Int(("M" as NSString).size(withAttributes: [.font: font]).width.rounded()))
+        let baseline = ((CGFloat(height) - (font.ascender - font.descender)) / 2 - font.descender).rounded()
         var drawn: [(map: [UInt8], coverage: Float)] = []
         var seen = Set<Character>()
         for character in characters where seen.insert(character).inserted {
-            var map = [UInt8](repeating: 0, count: cell * cell)
+            var map = [UInt8](repeating: 0, count: width * height)
             map.withUnsafeMutableBytes { buffer in
-                guard let context = CGContext(data: buffer.baseAddress, width: cell, height: cell, bitsPerComponent: 8, bytesPerRow: cell,
+                guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
                                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
                 let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(character), attributes: [
                     .font: font, .foregroundColor: NSColor.white,
                 ]))
-                let bounds = CTLineGetImageBounds(line, context)
-                context.setFillColor(gray: 1, alpha: 1)
-                context.textPosition = CGPoint(x: (CGFloat(cell) - bounds.width) / 2 - bounds.minX,
-                                               y: (CGFloat(cell) - bounds.height) / 2 - bounds.minY)
+                context.textPosition = CGPoint(x: ((CGFloat(width) - CTLineGetTypographicBounds(line, nil, nil, nil)) / 2).rounded(), y: baseline)
                 CTLineDraw(line, context)
             }
-            drawn.append((map, Float(map.reduce(0) { $0 + Int($1) }) / Float(255 * cell * cell)))
+            drawn.append((map, Float(map.reduce(0) { $0 + Int($1) }) / Float(255 * width * height)))
         }
         drawn.sort { $0.coverage < $1.coverage }
-        return (drawn.flatMap(\.map), drawn.map(\.coverage))
+        return (drawn.flatMap(\.map), drawn.map(\.coverage), width, height)
     }
 }
