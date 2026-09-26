@@ -5,9 +5,9 @@
 
 // The dither styles, in the order the Filter panel lists them.
 enum {
-    DITHER_ATKINSON, DITHER_FLOYD_STEINBERG, DITHER_JARVIS, DITHER_STUCKI, DITHER_BURKES, DITHER_SIERRA_LITE,
-    DITHER_BAYER_2, DITHER_BAYER_4, DITHER_BAYER_8, DITHER_RANDOM,
-    DITHER_DOTS, DITHER_LINES, DITHER_CROSSES, DITHER_DIAMONDS, DITHER_SQUARES,
+    DITHER_ATKINSON, DITHER_FLOYD_STEINBERG,
+    DITHER_BAYER_2, DITHER_BAYER_4, DITHER_BAYER_8,
+    DITHER_DOTS, DITHER_LINES, DITHER_DIAMONDS,
     DITHER_PATTERNS, DITHER_GLYPHS
 };
 
@@ -29,7 +29,6 @@ typedef struct {
     int originalColors;
     uint8_t dark[3];
     uint8_t light[3];
-    uint32_t seed;
     // Glyphs: `glyphCount` coverage maps of `cell` × `cell` bytes (255 is fully inked), from least inked to most,
     // with each map's mean coverage (0–1) in `glyphCoverage`.
     const uint8_t *glyphs;

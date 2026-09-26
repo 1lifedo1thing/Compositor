@@ -5,26 +5,19 @@ import CoreText
 nonisolated enum DitherStyle: String, CaseIterable, Sendable {
     case atkinson = "Atkinson (Classic Mac)"
     case floydSteinberg = "Floyd–Steinberg"
-    case jarvis = "Jarvis–Judice–Ninke"
-    case stucki = "Stucki"
-    case burkes = "Burkes"
-    case sierraLite = "Sierra Lite"
     case bayer2 = "Bayer 2 × 2"
     case bayer4 = "Bayer 4 × 4"
     case bayer8 = "Bayer 8 × 8"
-    case random = "Random"
     case dots = "Halftone Dots"
     case lines = "Halftone Lines"
-    case crosses = "Halftone Crosses"
     case diamonds = "Halftone Diamonds"
-    case squares = "Halftone Squares"
     case patterns = "Mac Patterns"
     case ascii = "ASCII"
 
     static let groups: [[DitherStyle]] = [
-        [.atkinson, .floydSteinberg, .jarvis, .stucki, .burkes, .sierraLite],
-        [.bayer2, .bayer4, .bayer8, .random],
-        [.dots, .lines, .crosses, .diamonds, .squares],
+        [.atkinson, .floydSteinberg],
+        [.bayer2, .bayer4, .bayer8],
+        [.dots, .lines, .diamonds],
         [.patterns, .ascii],
     ]
     var code: Int32 { Int32(Self.allCases.firstIndex(of: self)!) }
@@ -86,7 +79,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
         return result
     }
 
-    func apply(_ image: CGImage, seed: UInt32) throws -> CGImage {
+    func apply(_ image: CGImage) throws -> CGImage {
         let settings = normalized
         let block = Int(settings.pixelSize)
         // Chunky pixels: dither a copy averaged down by the pixel size, then blow it back up without smoothing.
@@ -104,7 +97,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
             guard let averaged = small.makeImage() else { throw ExportError.render }
             working = averaged
         }
-        let dithered = try settings.dither(working, seed: seed)
+        let dithered = try settings.dither(working)
         guard block > 1 else { return dithered }
         let full = try BrushRaster.context(width: image.width, height: image.height, mask: false)
         BrushRaster.draw(dithered, in: CGRect(x: 0, y: 0, width: dithered.width * block, height: dithered.height * block), mask: false, context: full)
@@ -112,7 +105,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
         return result
     }
 
-    private func dither(_ image: CGImage, seed: UInt32) throws -> CGImage {
+    private func dither(_ image: CGImage) throws -> CGImage {
         let cell = Int(cellSize)
         let glyphs: (maps: [UInt8], coverage: [Float]) = style == .ascii ? Self.glyphs(characters.isEmpty ? Self.defaultCharacters : characters, cell: cell) : ([], [])
         func bytes(_ color: AdjustmentColor) -> (UInt8, UInt8, UInt8) {
@@ -127,7 +120,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
                                               density: Float(density / 100), contrast: Float(contrast / 100), cell: Int32(cell),
                                               angle: Float(angle * .pi / 180), lightOnDark: lightOnDark ? 1 : 0,
                                               originalColors: colors == .original ? 1 : 0, dark: darkColor, light: lightColor,
-                                              seed: seed, glyphs: maps.baseAddress, glyphCoverage: coverage.baseAddress,
+                                              glyphs: maps.baseAddress, glyphCoverage: coverage.baseAddress,
                                               glyphCount: Int32(coverage.count))
                     failed = dither_apply(pixels, width, height, stride, &params) == 0
                 }

@@ -4,13 +4,6 @@
 
 static inline float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
-static inline uint32_t dither_hash(uint32_t x) {
-    x ^= x >> 16; x *= 0x7feb352dU;
-    x ^= x >> 15; x *= 0x846ca68bU;
-    x ^= x >> 16;
-    return x;
-}
-
 // Density darkens (positive) or lightens as a gamma, so black and white stay put; contrast pivots on mid gray.
 static inline float adjust_tone(float v, float gamma, float contrast) {
     v = powf(clamp01(v), gamma);
@@ -23,23 +16,10 @@ typedef struct { const Tap *taps; int count; float divisor; } Kernel;
 
 static const Tap atkinson[] = { {1,0,1}, {2,0,1}, {-1,1,1}, {0,1,1}, {1,1,1}, {0,2,1} };
 static const Tap floyd[] = { {1,0,7}, {-1,1,3}, {0,1,5}, {1,1,1} };
-static const Tap jarvis[] = { {1,0,7}, {2,0,5}, {-2,1,3}, {-1,1,5}, {0,1,7}, {1,1,5}, {2,1,3},
-                              {-2,2,1}, {-1,2,3}, {0,2,5}, {1,2,3}, {2,2,1} };
-static const Tap stucki[] = { {1,0,8}, {2,0,4}, {-2,1,2}, {-1,1,4}, {0,1,8}, {1,1,4}, {2,1,2},
-                              {-2,2,1}, {-1,2,2}, {0,2,4}, {1,2,2}, {2,2,1} };
-static const Tap burkes[] = { {1,0,8}, {2,0,4}, {-2,1,2}, {-1,1,4}, {0,1,8}, {1,1,4}, {2,1,2} };
-static const Tap sierra[] = { {1,0,2}, {-1,1,1}, {0,1,1} };
 
+// Atkinson passes on only six eighths of the error, which is what gives the Mac's crisp, contrasty look.
 static Kernel kernel_for(int style) {
-    switch (style) {
-    // Atkinson passes on only six eighths of the error, which is what gives the Mac's crisp, contrasty look.
-    case DITHER_ATKINSON: return (Kernel){ atkinson, 6, 8 };
-    case DITHER_FLOYD_STEINBERG: return (Kernel){ floyd, 4, 16 };
-    case DITHER_JARVIS: return (Kernel){ jarvis, 12, 48 };
-    case DITHER_STUCKI: return (Kernel){ stucki, 12, 42 };
-    case DITHER_BURKES: return (Kernel){ burkes, 7, 32 };
-    default: return (Kernel){ sierra, 3, 4 };
-    }
+    return style == DITHER_ATKINSON ? (Kernel){ atkinson, 6, 8 } : (Kernel){ floyd, 4, 16 };
 }
 
 static inline float quantize(float v, int levels) {
@@ -77,15 +57,14 @@ static const uint8_t bayer8[64] = {
 
 // The ordered threshold for a pixel, in [0, 1). Smaller Bayer matrices are the top-left corners of the 8 × 8 one,
 // rescaled, which is how the recursive construction nests them.
-static inline float ordered_threshold(int style, size_t x, size_t y, uint32_t seed) {
+static inline float ordered_threshold(int style, size_t x, size_t y) {
     switch (style) {
     case DITHER_BAYER_2: { static const uint8_t m[4] = { 0, 2, 3, 1 }; return ((float)m[(y & 1) * 2 + (x & 1)] + 0.5f) / 4; }
     case DITHER_BAYER_4: {
         static const uint8_t m[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
         return ((float)m[(y & 3) * 4 + (x & 3)] + 0.5f) / 16;
     }
-    case DITHER_BAYER_8: return ((float)bayer8[(y & 7) * 8 + (x & 7)] + 0.5f) / 64;
-    default: return (float)(dither_hash(seed ^ dither_hash((uint32_t)x * 0x9e3779b9U ^ dither_hash((uint32_t)y * 0x85ebca6bU))) >> 8) / 16777216.0f;
+    default: return ((float)bayer8[(y & 7) * 8 + (x & 7)] + 0.5f) / 64;
     }
 }
 
@@ -102,10 +81,7 @@ static inline float spot(int style, float u, float v) {
     switch (style) {
     case DITHER_DOTS: return 3.14159265f * (u * u + v * v);
     case DITHER_LINES: return av * 2;
-    // A plus sign: its middle marks first, then its arms reach out, joining its neighbors' only in the darkest tones.
-    case DITHER_CROSSES: return (au < av ? au : av) * 1.4f + (au > av ? au : av) * 0.8f;
-    case DITHER_DIAMONDS: return au + av;
-    default: { float m = (au > av ? au : av) * 2; return m * m; }
+    default: return au + av;
     }
 }
 
@@ -177,21 +153,19 @@ int dither_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, cons
     int style = p->style;
     int levels = p->levels < 2 ? 2 : p->levels > 16 ? 16 : p->levels;
 
-    if (style <= DITHER_RANDOM) {
+    if (style <= DITHER_BAYER_8) {
         // Diffusion and ordered dithering: each plane is quantized to `levels` tones, then mapped to colors.
-        if (style <= DITHER_SIERRA_LITE) {
+        if (style <= DITHER_FLOYD_STEINBERG) {
             DitherParams local = *p;
             local.levels = levels;
             for (int c = 0; c < planes; ++c) diffuse(tone + (size_t)c * count, alpha, width, height, &local);
         } else {
             for (int c = 0; c < planes; ++c) {
                 float *plane = tone + (size_t)c * count;
-                // A different random field per channel, so Original colors don't dither in lockstep.
-                uint32_t seed = p->seed + (uint32_t)c * 0x9e3779b9U;
                 for (size_t y = 0; y < height; ++y)
                     for (size_t x = 0; x < width; ++x) {
                         size_t at = y * width + x;
-                        if (alpha[at]) plane[at] = ordered(plane[at], ordered_threshold(style, x, y, seed), levels);
+                        if (alpha[at]) plane[at] = ordered(plane[at], ordered_threshold(style, x, y), levels);
                     }
             }
         }

@@ -195,7 +195,7 @@ nonisolated enum PixelFilter {
                                                                 visualizePointColor: job.visualizesPointColor, sharpenMask: job.showsSharpenMask)
         // Grain sits in layer pixels; the job's seed gives each application its own pattern.
         case .grain: image = try settings.grain.apply(job.image, unitsPerPixel: 1 / job.scale, seed: job.seed)
-        case .dither: image = try settings.dither.apply(job.image, seed: job.seed)
+        case .dither: image = try settings.dither.apply(job.image)
         case .removeBackground:
             image = try SubjectRemoval.run(job.image, settings: settings)
         case .contentAwareFill:
