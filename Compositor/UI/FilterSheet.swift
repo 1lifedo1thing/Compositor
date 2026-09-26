@@ -92,12 +92,17 @@ struct FilterSheet: View {
                 control("Distance", \.distance, range: 1...2000, unit: "px", decimals: 0, logarithmic: true)
             case .addNoise:
                 control("Amount", \.amount, range: 0.1...400, unit: "%", decimals: 1, logarithmic: true)
-                Picker("Distribution", selection: flag(\.gaussian)) {
-                    Text("Uniform").tag(false)
-                    Text("Gaussian").tag(true)
+                HStack(spacing: 10) {
+                    Text("Distribution")
+                    Picker("Distribution", selection: flag(\.gaussian)) {
+                        Text("Uniform").tag(false)
+                        Text("Gaussian").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
                 }
-                .pickerStyle(.segmented)
                 Toggle("Monochromatic", isOn: flag(\.monochromatic))
+            case .dither:
+                ditherControls
             case .vignette:
                 HStack(spacing: 8) {
                     Text("Color").frame(width: 95, alignment: .leading)
@@ -149,7 +154,9 @@ struct FilterSheet: View {
                 Spacer()
                 // While the preview is being worked out (Remove Background's mask, Content-Aware Fill) OK waits, so
                 // the panel says what it is waiting for rather than showing a disabled button and nothing else.
-                if edit?.committing == true || edit?.preparing == true {
+                // Only the slow filters say so: a quick preview (Dither, a blur) toggling this at every slider step would
+                // make the panel flicker as it grows and shrinks.
+                if edit?.committing == true || (edit?.preparing == true && edit?.kind.isAutomatic == true) {
                     ProgressView().controlSize(.small)
                     Text(edit?.committing == true ? "Applying…" : "Working…")
                         .font(.callout).foregroundStyle(.secondary)
@@ -170,7 +177,77 @@ struct FilterSheet: View {
         .onChange(of: session.colorPicker?.color) { _, _ in
             session.previewGradientMapColor()
             session.previewVignetteColor()
+            session.previewDitherColor()
         }
+    }
+
+    @ViewBuilder private var ditherControls: some View {
+        let dither = settings.dither
+        Picker("Style", selection: Binding(get: { dither.style }, set: { new in update { $0.dither.style = new } })) {
+            ForEach(DitherStyle.groups.indices, id: \.self) { group in
+                if group > 0 { Divider() }
+                ForEach(DitherStyle.groups[group], id: \.self) { Text($0.rawValue).tag($0) }
+            }
+        }
+        control("Pixel Size", \.dither.pixelSize, range: DitherSettings.pixelSizeRange, unit: "px", decimals: 0, logarithmic: false)
+            .help("Make each dithered pixel this many pixels across, for a chunky old-screen look")
+        if dither.style.isHalftone || dither.style == .ascii {
+            control("Cell Size", \.dither.cellSize, range: DitherSettings.cellSizeRange, unit: "px", decimals: 0, logarithmic: false)
+        }
+        if dither.style.isHalftone {
+            control("Angle", \.dither.angle, range: -90...90, unit: "°", decimals: 0, logarithmic: false)
+        }
+        if dither.style == .ascii {
+            HStack(spacing: 10) {
+                Text("Characters")
+                TextField("Characters", text: Binding(get: { dither.characters }, set: { new in update { $0.dither.characters = new } }))
+                    .textFieldStyle(.roundedBorder).font(.body.monospaced())
+            }
+            .help("The characters to draw with, in any order: each spot gets the one whose ink best matches its tone")
+        }
+        if dither.style.hasTones {
+            control("Tones", \.dither.levels, range: DitherSettings.levelsRange, unit: "", decimals: 0, logarithmic: false)
+                .help("Tones per channel: 2 is pure black and white")
+        }
+        if dither.style.diffuses {
+            control("Diffusion", \.dither.diffusion, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+                .help("How much of each pixel's error spreads to its neighbors. Less gives flatter areas")
+        }
+        control("Density", \.dither.density, range: -100...100, unit: "", decimals: 0, logarithmic: false)
+            .help("More ink (darker) or less before dithering")
+        control("Contrast", \.dither.contrast, range: -100...100, unit: "", decimals: 0, logarithmic: false)
+        // A menu, like Style: the three choices as segments are wider than the panel, which then flips between
+        // squeezing the row and wrapping it, resizing itself at every slider step.
+        Picker("Colors", selection: Binding(get: { dither.colors }, set: { new in update { $0.dither.colors = new } })) {
+            ForEach(DitherColors.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .fixedSize()
+        if dither.colors == .twoColors {
+            HStack(spacing: 8) {
+                Text("Dark")
+                swatch(dither.dark, help: "Choose the dark color") { session.openDitherColorPicker(light: false) }
+                Text("Light").padding(.leading, 10)
+                swatch(dither.light, help: "Choose the light color") { session.openDitherColorPicker(light: true) }
+                Spacer()
+            }
+        }
+        if dither.style.drawsMarks {
+            Toggle("Light on Dark", isOn: flag(\.dither.lightOnDark))
+                .help("Draw the marks for the light tones on the dark color, like a glowing screen")
+        }
+    }
+
+    private func swatch(_ color: AdjustmentColor, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+            shape.fill(Color(.sRGB, red: color.red, green: color.green, blue: color.blue))
+                .overlay { shape.inset(by: 1).strokeBorder(.white, lineWidth: 1.5) }
+                .overlay { shape.strokeBorder(.black, lineWidth: 1) }
+                .frame(width: 24, height: 24)
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func flag(_ key: WritableKeyPath<FilterSettings, Bool>) -> Binding<Bool> {

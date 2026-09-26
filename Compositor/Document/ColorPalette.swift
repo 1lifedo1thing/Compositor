@@ -126,6 +126,8 @@ extension EditorSession {
                 setGradientMapColor(commit ? colorPicker.color : colorPicker.original, highlights: highlights)
             case .vignette:
                 setVignetteColor(commit ? colorPicker.color : colorPicker.original)
+            case .dither(let light):
+                setDitherColor(commit ? colorPicker.color : colorPicker.original, light: light)
             }
         }
         colorPicker = nil
@@ -167,6 +169,23 @@ extension EditorSession {
     func previewGradientMapColor() {
         guard let colorPicker, case .gradientMap(let highlights) = colorPicker.target else { return }
         setGradientMapColor(colorPicker.color, highlights: highlights)
+    }
+    func openDitherColorPicker(light: Bool) {
+        guard canEditPalette, colorPicker == nil, let edit = filterEdit, edit.kind == .dither, !edit.committing else { return }
+        let value = light ? edit.settings.dither.light : edit.settings.dither.dark
+        colorPicker = ColorPickerState(target: .dither(light: light),
+                                       original: PaletteColor(red: value.red, green: value.green, blue: value.blue))
+    }
+    func previewDitherColor() {
+        guard let colorPicker, case .dither(let light) = colorPicker.target else { return }
+        setDitherColor(colorPicker.color, light: light)
+    }
+    private func setDitherColor(_ color: PaletteColor, light: Bool) {
+        guard let edit = filterEdit, edit.kind == .dither, !edit.committing else { return }
+        var settings = edit.settings
+        if light { settings.dither.light = AdjustmentColor(color) } else { settings.dither.dark = AdjustmentColor(color) }
+        guard settings != edit.settings else { return }
+        updateFilter(settings, preview: edit.preview)
     }
     func previewVignetteColor() {
         guard let colorPicker, case .vignette = colorPicker.target else { return }
@@ -225,6 +244,8 @@ enum ColorPickerTarget: Equatable {
     case effect(kind: LayerEffectKind)
     case gradientMap(highlights: Bool)
     case vignette
+    /// Dither's Two Colors: the dark one or the light one.
+    case dither(light: Bool)
     case text(draftID: UUID?)
     var title: String {
         switch self {
@@ -233,6 +254,7 @@ enum ColorPickerTarget: Equatable {
         case .palette(let background): return background ? "Color Picker (Background Color)" : "Color Picker (Foreground Color)"
         case .gradientMap(let highlights): return highlights ? "Color Picker (Gradient Map Highlights)" : "Color Picker (Gradient Map Shadows)"
         case .vignette: return "Color Picker (Vignette Color)"
+        case .dither(let light): return light ? "Color Picker (Dither Light Color)" : "Color Picker (Dither Dark Color)"
         }
     }
 }
