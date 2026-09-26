@@ -39,4 +39,7 @@ typedef struct {
 // Dithers premultiplied RGBA pixels (4 bytes per pixel, `stride` bytes per row) in place. Alpha is kept and fully
 // transparent pixels are left alone. Returns 0 if working memory couldn't be had.
 int dither_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, const DitherParams *params);
+// Turns each `block` × `block` square of premultiplied RGBA pixels into a round dot in its own color on `gap` (straight
+// sRGB), like the lit pixels of a dot-matrix screen. The dot's edge is smoothed and alpha is kept.
+void dither_dots(uint8_t *rgba, size_t width, size_t height, size_t stride, int block, const uint8_t *gap);
 #endif

@@ -30,6 +30,13 @@ nonisolated enum DitherStyle: String, CaseIterable, Sendable {
     var drawsMarks: Bool { !hasTones }
 }
 
+/// How a chunky pixel is drawn: a solid square, or a round dot with the dark color showing around it, like the lit
+/// pixels of a dot-matrix or LED screen.
+nonisolated enum DitherPixelShape: String, CaseIterable, Sendable {
+    case square = "Square"
+    case dot = "Dot"
+}
+
 nonisolated enum DitherColors: String, CaseIterable, Sendable {
     case blackWhite = "Black & White"
     case twoColors = "Two Colors"
@@ -43,7 +50,8 @@ nonisolated struct DitherSettings: Equatable, Sendable {
     static let defaultCharacters = " .:-=+*#%@"
     var style: DitherStyle = .atkinson
     /// Each dithered pixel covers this many layer pixels on a side, for chunky old-screen pixels.
-    var pixelSize: Double = 1
+    var pixelSize: Double = 2
+    var pixelShape: DitherPixelShape = .square
     /// Halftone screen and character cells, in dithered pixels.
     var cellSize: Double = 8
     /// Halftone screen angle in degrees.
@@ -66,7 +74,7 @@ nonisolated struct DitherSettings: Equatable, Sendable {
 
     var normalized: Self {
         var result = self
-        result.pixelSize = ImageAdjustmentPixels.clamp(pixelSize, Self.pixelSizeRange, 1).rounded()
+        result.pixelSize = ImageAdjustmentPixels.clamp(pixelSize, Self.pixelSizeRange, 2).rounded()
         result.cellSize = ImageAdjustmentPixels.clamp(cellSize, Self.cellSizeRange, 8).rounded()
         result.angle = ImageAdjustmentPixels.clamp(angle, -90...90, 45)
         result.levels = ImageAdjustmentPixels.clamp(levels, Self.levelsRange, 2).rounded()
@@ -101,8 +109,18 @@ nonisolated struct DitherSettings: Equatable, Sendable {
         guard block > 1 else { return dithered }
         let full = try BrushRaster.context(width: image.width, height: image.height, mask: false)
         BrushRaster.draw(dithered, in: CGRect(x: 0, y: 0, width: dithered.width * block, height: dithered.height * block), mask: false, context: full)
+        if settings.pixelShape == .dot {
+            guard let data = full.data else { throw ExportError.render }
+            // The gaps are the dark color: black, or the one picked.
+            var gap: [UInt8] = settings.colors == .twoColors ? settings.darkBytes : [0, 0, 0]
+            dither_dots(data.assumingMemoryBound(to: UInt8.self), image.width, image.height, full.bytesPerRow, Int32(block), &gap)
+        }
         guard let result = full.makeImage() else { throw ExportError.render }
         return result
+    }
+
+    private var darkBytes: [UInt8] {
+        [UInt8((dark.red * 255).rounded()), UInt8((dark.green * 255).rounded()), UInt8((dark.blue * 255).rounded())]
     }
 
     private func dither(_ image: CGImage) throws -> CGImage {

@@ -258,3 +258,21 @@ int dither_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, cons
     free(tone); free(alpha); free(source);
     return 1;
 }
+
+void dither_dots(uint8_t *rgba, size_t width, size_t height, size_t stride, int block, const uint8_t *gap) {
+    if (block < 2) return;
+    float radius = (float)block * 0.42f, middle = (float)block / 2;
+    for (size_t y = 0; y < height; ++y) {
+        uint8_t *row = rgba + y * stride;
+        float dy = (float)(y % (size_t)block) + 0.5f - middle;
+        for (size_t x = 0; x < width; ++x) {
+            uint8_t *px = row + x * 4;
+            if (!px[3]) continue;
+            float dx = (float)(x % (size_t)block) + 0.5f - middle;
+            float cover = clamp01(radius - sqrtf(dx * dx + dy * dy) + 0.5f);
+            if (cover >= 1) continue;
+            for (int c = 0; c < 3; ++c)
+                px[c] = (uint8_t)lroundf((float)px[c] * cover + (float)gap[c] * (float)px[3] / 255.0f * (1 - cover));
+        }
+    }
+}

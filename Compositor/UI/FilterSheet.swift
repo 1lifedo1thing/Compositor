@@ -231,6 +231,13 @@ struct FilterSheet: View {
                 Spacer()
             }
         }
+        if dither.pixelSize > 1 {
+            Picker("Pixel Shape", selection: Binding(get: { dither.pixelShape }, set: { new in update { $0.dither.pixelShape = new } })) {
+                ForEach(DitherPixelShape.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .fixedSize()
+            .help("Draw each chunky pixel as a solid square, or as a round dot like a dot-matrix screen")
+        }
         if dither.style.drawsMarks {
             Toggle("Light on Dark", isOn: flag(\.dither.lightOnDark))
                 .help("Draw the marks for the light tones on the dark color, like a glowing screen")
