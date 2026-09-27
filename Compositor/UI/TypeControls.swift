@@ -122,13 +122,26 @@ private struct TypeFontPicker: NSViewRepresentable {
         context.coordinator.fontName = $fontName
         button.isEnabled = isEnabled
         guard !context.coordinator.tracking else { return }
-        if fontName.isEmpty {
-            if button.indexOfSelectedItem != -1 { button.selectItem(at: -1) }
-            return
-        }
+        if fontName.isEmpty { Self.showMultiple(in: button); return }
+        Self.hideMultiple(in: button)
         guard button.titleOfSelectedItem != fontName else { return }
         if button.item(withTitle: fontName) == nil { button.addItem(withTitle: fontName) }
         button.selectItem(withTitle: fontName)
+    }
+
+    /// Selected letters in more than one face: the menu says so with an item of its own at the top, which isn't a font.
+    private static let multiple = "(Multiple)"
+    private static func isMultiple(_ item: NSMenuItem?) -> Bool { item?.representedObject as? String == multiple }
+    static func showMultiple(in button: NSPopUpButton) {
+        if !isMultiple(button.item(at: 0)) {
+            let item = NSMenuItem(title: multiple, action: nil, keyEquivalent: "")
+            item.representedObject = multiple
+            button.menu?.insertItem(item, at: 0)
+        }
+        if button.indexOfSelectedItem != 0 { button.selectItem(at: 0) }
+    }
+    static func hideMultiple(in button: NSPopUpButton) {
+        if isMultiple(button.item(at: 0)) { button.removeItem(at: 0) }
     }
 
     static func dismantleNSView(_ button: NSPopUpButton, coordinator: Coordinator) {
@@ -160,7 +173,7 @@ private struct TypeFontPicker: NSViewRepresentable {
             names.sort()
             button.removeAllItems()
             button.addItems(withTitles: names)
-            if selected.isEmpty { button.selectItem(at: -1) } else { button.selectItem(withTitle: selected) }
+            if selected.isEmpty { TypeFontPicker.showMultiple(in: button) } else { button.selectItem(withTitle: selected) }
             loaded = true
         }
 
@@ -168,7 +181,8 @@ private struct TypeFontPicker: NSViewRepresentable {
         func menuDidClose(_ menu: NSMenu) { tracking = false }
 
         @objc func choose(_ button: NSPopUpButton) {
-            guard let selected = button.titleOfSelectedItem, selected != fontName.wrappedValue else { return }
+            guard !TypeFontPicker.isMultiple(button.selectedItem),
+                  let selected = button.titleOfSelectedItem, selected != fontName.wrappedValue else { return }
             fontName.wrappedValue = selected
         }
     }
