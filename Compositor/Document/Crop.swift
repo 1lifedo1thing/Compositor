@@ -136,6 +136,19 @@ extension EditorSession {
         return snapped
     }
 
+    /// `point` moved onto the nearest crop target within `tolerance` document pixels, each axis on its own: where a
+    /// Marquee or a shape starts and where its corner is dragged to.
+    func snappedPoint(_ point: CGPoint, tolerance: CGFloat) -> CGPoint {
+        guard snappingEnabled else { snapGuides = ([], []); return point }
+        let targets = cropSnapTargets()
+        func nearest(_ value: CGFloat, in lines: [CGFloat]) -> CGFloat? {
+            lines.filter { abs($0 - value) <= tolerance }.min { abs($0 - value) < abs($1 - value) }
+        }
+        let x = nearest(point.x, in: targets.xs), y = nearest(point.y, in: targets.ys)
+        snapGuides = (x.map { [$0] } ?? [], y.map { [$0] } ?? [])
+        return CGPoint(x: x ?? point.x, y: y ?? point.y)
+    }
+
     /// What crop edges snap to: View > Snap To targets, without layer/canvas centers.
     func cropSnapTargets() -> (xs: [CGFloat], ys: [CGFloat]) {
         alignmentSnapTargets(includeCenters: false)
