@@ -2210,8 +2210,15 @@ final class CanvasView: NSView {
         guard let start = selectionDragStart, let document = session.document else { return }
         let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
         var offset = CGSize(width: pixel.x - start.x, height: pixel.y - start.y)
+        var horizontal = true, vertical = true
         if flags.contains(.shift) {
-            if abs(offset.width) >= abs(offset.height) { offset.height = 0 } else { offset.width = 0 }
+            if abs(offset.width) >= abs(offset.height) { offset.height = 0; vertical = false } else { offset.width = 0; horizontal = false }
+        }
+        // Snaps to View > Snap To targets as a drawn Marquee does, unless Control is held.
+        if flags.contains(.control) { session.snapGuides = ([], []) }
+        else {
+            offset = session.snappedSelectionOffset(offset, tolerance: TransformSnap.distance / max(session.viewport.pointsPerPixel, 0.0001),
+                                                    horizontal: horizontal, vertical: vertical)
         }
         session.moveSelection(by: offset)
     }
