@@ -173,4 +173,21 @@ struct GuideTests {
         #expect(CanvasRulerNSView.label(0) as String == "0")
         #expect(CanvasRulerNSView.label(250) as String == "250")
     }
+
+    @Test func drawnPointsSnapToTheSnapToTargets() throws {
+        let session = try paintedSession()
+        session.snapToLayers = false
+        session.showsGrid = true
+        session.snapToGrid = true
+        // Each axis on its own, to the nearest line within reach: grid lines every 8 px, the canvas edge at 400.
+        #expect(session.snappedPoint(CGPoint(x: 62, y: 20), tolerance: 3) == CGPoint(x: 64, y: 20))
+        #expect(session.snappedPoint(CGPoint(x: 397.5, y: 9), tolerance: 3) == CGPoint(x: 400, y: 8))
+        #expect(session.snapGuides.xs == [400] && session.snapGuides.ys == [8], "the lines met are shown")
+        session.snappingEnabled = false
+        #expect(session.snappedPoint(CGPoint(x: 62, y: 20), tolerance: 3) == CGPoint(x: 62, y: 20))
+        session.snappingEnabled = true
+        session.snapEnabled = false
+        #expect(session.snappedPoint(CGPoint(x: 62, y: 20), tolerance: 3) == CGPoint(x: 62, y: 20))
+        #expect(session.snapGuides.xs.isEmpty && session.snapGuides.ys.isEmpty)
+    }
 }
