@@ -83,7 +83,7 @@ To change an existing layer, keep its `id` and overwrite its PNG, then rewrite t
 
 Remove images you no longer reference once the manifest no longer lists them.
 
-A project Compositor saved also has a `QuickLook` folder (`Thumbnail.jpg` and `Preview.jpg`), which Finder shows as its icon and Space-bar preview. When you change a project, delete that folder, so Finder shows the plain icon rather than an out-of-date picture; Compositor writes it again the next time it saves.
+A project Compositor saved also has a `QuickLook` folder (`Preview.jpg`), which Finder shows as its Space-bar preview. When you change a project, delete that folder, so Finder doesn't preview an out-of-date picture; Compositor writes it again the next time it saves.
 
 ## What the open app does
 

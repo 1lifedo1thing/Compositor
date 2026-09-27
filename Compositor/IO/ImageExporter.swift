@@ -75,15 +75,13 @@ actor ImageExporter {
         }
     }
 
-    /// Finder's thumbnail and the Space-bar preview, saved in the project's QuickLook folder: the flattened image on
-    /// white, as JPEGs (256 and 1,024 px on the long side), so they add only a couple of hundred KB. Nil for canvases
-    /// too large to flatten on every save, which keep Finder's plain icon.
+    /// The Space-bar preview, saved in the project's QuickLook folder: the flattened image on white, a JPEG up to
+    /// 1,024 px on the long side, about 100–200 KB. Nil for canvases too large to flatten on every save.
     func quickLookImages(_ snapshot: ProjectSnapshot) -> QuickLookImages? {
         guard snapshot.manifest.width * snapshot.manifest.height <= 50_000_000,
               let raster = try? render(snapshot),
-              let preview = try? scaledJPEG(raster.image, longSide: 1024),
-              let thumbnail = try? scaledJPEG(raster.image, longSide: 256) else { return nil }
-        return QuickLookImages(thumbnail: thumbnail, preview: preview)
+              let preview = try? scaledJPEG(raster.image, longSide: 1024) else { return nil }
+        return QuickLookImages(preview: preview)
     }
 
     private func scaledJPEG(_ image: CGImage, longSide: CGFloat) throws -> Data {
@@ -169,7 +167,6 @@ actor ImageExporter {
 }
 
 nonisolated struct QuickLookImages: Sendable {
-    let thumbnail: Data
     let preview: Data
 }
 nonisolated struct ExportRaster: @unchecked Sendable {

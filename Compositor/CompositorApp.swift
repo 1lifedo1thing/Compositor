@@ -27,13 +27,13 @@ struct CompositorApp: App {
                     if session.textDraft != nil || session.levels != nil || session.isProjectBusy || session.showsNewDocument || session.showsImporter || session.renamingLayerID != nil || session.transformEdit?.persistent == true {
                         Button("Undo") {
                             if NSApp.keyWindow?.firstResponder is NSTextView {
-                                NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
+                                NSApp.sendAction(NSSelectorFromString("undo:"), to: nil, from: nil)
                             }
                         }
                             .configuredKeyboardShortcut("z")
                         Button("Redo") {
                             if NSApp.keyWindow?.firstResponder is NSTextView {
-                                NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
+                                NSApp.sendAction(NSSelectorFromString("redo:"), to: nil, from: nil)
                             }
                         }
                             .configuredKeyboardShortcut("z", modifiers: [.command, .shift])

@@ -113,10 +113,9 @@ actor ProjectStore {
             "manifest.json": FileWrapper(regularFileWithContents: metadata),
             "images": FileWrapper(directoryWithFileWrappers: images)
         ]
-        // Finder's thumbnail and Quick Look's preview read these by name; loading ignores them.
+        // Quick Look's Space-bar preview reads this by name; loading ignores it.
         if let quickLook {
             contents["QuickLook"] = FileWrapper(directoryWithFileWrappers: [
-                "Thumbnail.jpg": FileWrapper(regularFileWithContents: quickLook.thumbnail),
                 "Preview.jpg": FileWrapper(regularFileWithContents: quickLook.preview),
             ])
         }
