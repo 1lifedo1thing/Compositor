@@ -269,6 +269,8 @@ final class EditorSession {
     @ObservationIgnored var dialogColorChange: ((PaletteColor) -> Void)?
     /// A dialog with its own zoomable preview (Export JPEG) is open: the View menu's zoom commands zoom that instead.
     @ObservationIgnored var previewZoom: ((PreviewZoomCommand) -> Void)?
+    /// The text's style before the font menu started previewing faces on it (see `previewFont`).
+    @ObservationIgnored var fontPreviewOriginal: LayerTextStyle?
     var selectionFeatherAmount = 2
     var wandSettings = WandSettings()
     var objectSelectionSettings = ObjectSelectionSettings()
