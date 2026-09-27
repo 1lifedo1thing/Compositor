@@ -95,7 +95,7 @@ struct GridSettingsSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Cancel") { DialogColorSwatch.closePicker(session); finish(nil) }.configuredNativeShortcut(.escape)
-                Button("Defaults") {
+                Button("Restore Defaults") {
                     spacing = LayoutGrid().spacing
                     subdivisions = LayoutGrid().subdivisions
                     // The Custom color is kept, so it's still there if Custom is chosen again.
