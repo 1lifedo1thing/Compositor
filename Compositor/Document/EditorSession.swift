@@ -273,6 +273,26 @@ final class EditorSession {
     var showsPixelGrid = ToolDefaults.bool("pixelGrid", true) { didSet { ToolDefaults.set(showsPixelGrid, "pixelGrid") } }
     /// Layout grid (View > Show > Grid). Off until turned on; independent of the 800% pixel grid.
     var showsGrid = ToolDefaults.bool("grid", false) { didSet { ToolDefaults.set(showsGrid, "grid") } }
+    /// The layout grid's spacing and subdivisions (View > Grid Settings…). The person's, not the project's.
+    var layoutGrid = LayoutGrid(spacing: ToolDefaults.int("gridSpacing", 64), subdivisions: ToolDefaults.int("gridSubdivisions", 8)) {
+        didSet {
+            ToolDefaults.set(layoutGrid.spacing, "gridSpacing")
+            ToolDefaults.set(layoutGrid.subdivisions, "gridSubdivisions")
+        }
+    }
+    /// The layout grid's color, line style and opacity (View > Grid Settings…), also the person's.
+    var gridAppearance = GridAppearance(
+        preset: GridAppearance.Preset(rawValue: ToolDefaults.string("gridColor", "")) ?? .lightGray,
+        customColor: PaletteColor(hex: ToolDefaults.string("gridCustomColor", "")) ?? GridAppearance().customColor,
+        style: GridAppearance.Style(rawValue: ToolDefaults.string("gridStyle", "")) ?? .lines,
+        opacity: ToolDefaults.int("gridOpacity", GridAppearance().opacity)) {
+        didSet {
+            ToolDefaults.set(gridAppearance.preset.rawValue, "gridColor")
+            ToolDefaults.set(gridAppearance.customColor.hex, "gridCustomColor")
+            ToolDefaults.set(gridAppearance.style.rawValue, "gridStyle")
+            ToolDefaults.set(gridAppearance.opacity, "gridOpacity")
+        }
+    }
     /// User guides. Hidden extras do not snap.
     var showsGuides = ToolDefaults.bool("guides", true) { didSet { ToolDefaults.set(showsGuides, "guides") } }
     var showsRulers = ToolDefaults.bool("rulers", false) { didSet { ToolDefaults.set(showsRulers, "rulers") } }
