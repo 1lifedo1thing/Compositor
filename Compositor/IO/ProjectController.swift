@@ -227,7 +227,8 @@ final class ProjectController {
             externalChanges.saving = true
             defer { externalChanges.saving = false }
             do {
-                try await ProjectStore.shared.save(snapshot, to: destination)
+                let quickLook = await ImageExporter.shared.quickLookImages(snapshot)
+                try await ProjectStore.shared.save(snapshot, to: destination, quickLook: quickLook)
                 session.projectURL = destination
                 session.history.markSaved(revision)
                 saveGeneration += 1
