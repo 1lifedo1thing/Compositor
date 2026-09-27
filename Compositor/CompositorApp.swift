@@ -128,6 +128,8 @@ struct CompositorApp: App {
                                 Toggle("Guides", isOn: Binding(get: { session.showsGuides }, set: { session.showsGuides = $0 }))
                                     .configuredKeyboardShortcut(";").disabled(session.document == nil)
                             }
+                            Button("Grid Settings…") { Task { await applicationDelegate.projects.gridSettings() } }
+                                .disabled(session.document == nil)
                             Toggle("Rulers", isOn: Binding(get: { session.showsRulers }, set: { session.showsRulers = $0 }))
                                 .configuredKeyboardShortcut("r").disabled(session.document == nil)
                             Divider()
