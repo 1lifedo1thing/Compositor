@@ -267,6 +267,8 @@ final class EditorSession {
     var colorRange: ColorRangeEdit? { didSet { resumeFileRequests() } }
     /// The dialog whose color the picker is open on (`ColorPickerTarget.dialog`).
     @ObservationIgnored var dialogColorChange: ((PaletteColor) -> Void)?
+    /// A dialog with its own zoomable preview (Export JPEG) is open: the View menu's zoom commands zoom that instead.
+    @ObservationIgnored var previewZoom: ((PreviewZoomCommand) -> Void)?
     var selectionFeatherAmount = 2
     var wandSettings = WandSettings()
     var objectSelectionSettings = ObjectSelectionSettings()
@@ -939,6 +941,8 @@ final class EditorSession {
     }
 
     /// Step through stable keyboard zoom levels while keeping the viewport center fixed.
+    enum PreviewZoomCommand { case zoomIn, zoomOut, fit, actual }
+
     func zoomKeyboard(by step: Int) {
         guard let document, step != 0 else { return }
         let target = viewport.keyboardZoomTarget(by: step)

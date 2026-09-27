@@ -96,16 +96,21 @@ struct CompositorApp: App {
                         Button("Check for Updates…") { applicationDelegate.updater.checkForUpdates(nil) }
                     }
                     CommandGroup(after: .toolbar) {
-                        Button("Fit Canvas") { session.fit() }.configuredKeyboardShortcut("0").disabled(session.document == nil)
-                        Button("Actual Pixels") { session.zoom(to: 1) }.configuredKeyboardShortcut("1").disabled(session.document == nil)
+                        // With a dialog's preview open (Export JPEG), these zoom that preview rather than the canvas.
+                        Button("Fit Canvas") {
+                            if let preview = session.previewZoom { preview(.fit) } else { session.fit() }
+                        }.configuredKeyboardShortcut("0").disabled(session.document == nil)
+                        Button("Actual Pixels") {
+                            if let preview = session.previewZoom { preview(.actual) } else { session.zoom(to: 1) }
+                        }.configuredKeyboardShortcut("1").disabled(session.document == nil)
                         Button("Zoom In") {
                             guard !(NSApp.keyWindow?.firstResponder is NSText) else { return }
-                            session.zoomKeyboard(by: 1)
+                            if let preview = session.previewZoom { preview(.zoomIn) } else { session.zoomKeyboard(by: 1) }
                         }
                             .configuredKeyboardShortcut("=").disabled(session.document == nil)
                         Button("Zoom Out") {
                             guard !(NSApp.keyWindow?.firstResponder is NSText) else { return }
-                            session.zoomKeyboard(by: -1)
+                            if let preview = session.previewZoom { preview(.zoomOut) } else { session.zoomKeyboard(by: -1) }
                         }
                             .configuredKeyboardShortcut("-").disabled(session.document == nil)
                         Toggle("Pixel Grid (800% and above)", isOn: Binding(get: { session.showsPixelGrid },

@@ -115,7 +115,9 @@ actor ImageExporter {
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 1000,
+                    // Full size, so the dialog's 100% view shows the real artifacts; capped to keep memory in bounds.
+                    kCGImageSourceThumbnailMaxPixelSize: min(max(image.width, image.height), 8192),
+                    kCGImageSourceShouldCacheImmediately: true,
                     kCGImageSourceCreateThumbnailWithTransform: true
                   ] as CFDictionary) else { throw ExportError.encode }
             return JPEGResult(data: data, preview: preview)
