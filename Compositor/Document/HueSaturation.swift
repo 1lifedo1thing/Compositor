@@ -307,8 +307,7 @@ nonisolated enum HueSaturationFilter {
             lightnessAmount = sampled.lightness / 100
             hue = (hue + sampled.shift).truncatingRemainder(dividingBy: 360)
             if hue < 0 { hue += 360 }
-            // Multiplicative, so neutral grays stay neutral.
-            saturation = min(1, max(0, saturation * (1 + sampled.saturation / 100)))
+            saturation = adjustedSaturation(saturation, by: sampled.saturation)
         }
         // Lightness pulls toward white above 0 and toward black below, reaching either at ±100.
         let amount = min(1, max(-1, lightnessAmount))
@@ -317,6 +316,14 @@ nonisolated enum HueSaturationFilter {
     }
 
     /// The hue a spectrum swatch becomes, for the "after" bar.
+    /// Photoshop's Saturation: below 0 it scales toward gray (−100 is gray); above 0 it divides by what's left, so
+    /// +50 doubles it and +100 takes any color all the way. Multiplicative both ways, so neutral grays stay neutral.
+    static func adjustedSaturation(_ saturation: Double, by amount: Double) -> Double {
+        let amount = min(1, max(-1, amount / 100))
+        guard amount > 0 else { return max(0, saturation * (1 + amount)) }
+        return amount >= 1 ? (saturation > 0 ? 1 : 0) : min(1, saturation / (1 - amount))
+    }
+
     static func shiftedHue(_ hue: Double, settings: HueSaturationSettings) -> Double {
         var shift = 0.0
         for (colorRange, adjustment) in settings.adjustments where adjustment.hue != 0 {
