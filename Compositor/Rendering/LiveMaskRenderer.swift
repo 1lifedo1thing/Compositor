@@ -12,7 +12,7 @@ nonisolated final class LiveMaskRenderer {
     private var visiting = Set<UUID>()
     private var stacks: [UUID: [UUID]] = [:]
     private var stacked = Set<UUID>()
-    private var stackModes: [UUID: CGBlendMode] = [:]
+    private var stackModes: [UUID: LayerBlendMode] = [:]
     private var blendMode: (UUID) -> LayerBlendMode = { _ in .normal }
     var adjustment: (UUID) -> LayerAdjustment? = { _ in nil }
     var adjustmentOpacity: (UUID) -> Double = { _ in 1 }
@@ -86,7 +86,7 @@ nonisolated final class LiveMaskRenderer {
             }
             guard !children.isEmpty else { continue }
             stacks[base] = children
-            stackModes[base] = blend(base).cgMode
+            stackModes[base] = blend(base)
             stacked.formUnion(children)
         }
     }
@@ -115,12 +115,23 @@ nonisolated final class LiveMaskRenderer {
         }
         layer_restore_alpha(pixels, group.bytesPerRow, coverage, alpha.bytesPerRow, w, h)
         if let image = group.makeImage() {
-            context.saveGState()
-            context.setBlendMode(stackModes[id] ?? .normal)
-            context.translateBy(x: bounds.minX, y: bounds.maxY)
-            context.scaleBy(x: 1, y: -1)
-            context.draw(image, in: CGRect(origin: .zero, size: bounds.size))
-            context.restoreGState()
+            let bounds = bounds
+            func place(_ target: CGContext) {
+                target.saveGState()
+                target.translateBy(x: bounds.minX, y: bounds.maxY)
+                target.scaleBy(x: 1, y: -1)
+                target.draw(image, in: CGRect(origin: .zero, size: bounds.size))
+                target.restoreGState()
+            }
+            // The stack blends in its base's mode — through Core Image for the ones Core Graphics can't draw (Linear
+            // Dodge and the rest), which it would otherwise draw as Normal.
+            let mode = stackModes[id] ?? .normal
+            if !(SeparableBlend.needsSurface(mode) && SeparableBlend.draw(mode, in: context, body: place)) {
+                context.saveGState()
+                context.setBlendMode(mode.cgMode)
+                place(context)
+                context.restoreGState()
+            }
         }
     }
     init(bounds: CGRect, source: @escaping (UUID) -> UUID?, drawOwn: @escaping (UUID, CGContext) -> Void) {
