@@ -2755,9 +2755,16 @@ extension CanvasView {
         func own(_ layer: ImageLayer) -> CIImage? {
             let opacity = layer.effectiveOpacity(in: byID)
             // Smudge or Liquify in progress: the layer as the stroke has reshaped it so far, across the canvas.
-            if let warp = session.warpStroke, warp.layer.id == layer.id, let image = warp.image {
+            if let warp = session.warpStroke, warp.layer.id == layer.id, warp.gpu != nil || warp.image != nil {
                 let canvas = LayerTransform(origin: .zero, size: document.size)
-                guard var placed = placement.place(transient: image, transform: canvas) else { unsupported = true; return nil }
+                // On the GPU, drawn straight from where the dabs run; otherwise uploaded as it stands.
+                let shown: CIImage?
+                if let working = warp.gpu?.image {
+                    shown = placement.place(live: working, width: warp.width, height: warp.height, transform: canvas)
+                } else {
+                    shown = warp.image.flatMap { placement.place(transient: $0, transform: canvas) }
+                }
+                guard var placed = shown else { unsupported = true; return nil }
                 if let mask = layer.mask?.clipImage(placement: layer.maskTransform, over: canvas, width: warp.width, height: warp.height, limit: 2048) {
                     guard let placedMask = placement.place(mask, transform: canvas, mask: true) else { unsupported = true; return nil }
                     placed = GPUBlend.masked(placed, by: placedMask)
