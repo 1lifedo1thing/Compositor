@@ -455,4 +455,74 @@ import Testing
         let difference = try compare(session, name: "editing-\(edit.rawValue)")
         #expect(difference.mean < 1.5 && difference.over < 0.01, "\(edit.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
+
+    /// A clipping stack whose base is in a mode Core Graphics can't draw: Copy Merged, export and both canvases blend
+    /// the stack in that mode (they used to draw it Normal everywhere but the GPU canvas).
+    @Test(arguments: [LayerBlendMode.linearDodge, .colorDodge, .multiply])
+    func clippingStacksBlendInTheirBasesMode(mode: LayerBlendMode) async throws {
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 500, height: 400), backingScale: 2, documentSize: nil)
+        session.createDocument(width: 100, height: 100)
+        func solid(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, _ size: Int = 100) throws -> CGImage {
+            let context = try BrushRaster.context(width: size, height: size, mask: false)
+            context.setFillColor(CGColor(srgbRed: red, green: green, blue: blue, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+            return context.makeImage()!
+        }
+        for (image, name) in [(try solid(0.4, 0.2, 0.1), "Base"), (try solid(0.3, 0.3, 0.3), "Blended"), (try solid(0.2, 0.05, 0, 50), "Clipped")] {
+            session.insert(ImportedImage(image: image, thumbnail: image, name: name))
+        }
+        let layers = session.document!.layers
+        session.document!.layers[layers.count - 2].blendMode = mode
+        session.document!.layers[layers.count - 1].maskSourceID = layers[layers.count - 2].id
+        session.document!.layers[layers.count - 1].transform.origin = .zero
+        session.selectLayer(nil)
+        session.selectAll()
+        func pixel(_ image: CGImage, _ x: Int, _ y: Int) throws -> [Int] {
+            let copy = try BrushRaster.copy(image)
+            let data = try #require(copy.data).assumingMemoryBound(to: UInt8.self)
+            return (0..<3).map { Int(data[y * copy.bytesPerRow + x * 4 + $0]) }
+        }
+        let merged = try #require(try session.renderMergedPixels()).image
+        let exported = try await ImageExporter.shared.render(try #require(session.projectSnapshot())).image
+        // Where the clipped layer covers the stack, and where only the stack's base does.
+        for (x, y) in [(20, 20), (80, 80)] {
+            #expect(try pixel(merged, x, y) == pixel(exported, x, y), "\(mode.rawValue) at \(x),\(y): Copy Merged matches export")
+        }
+        if mode == .linearDodge {
+            let covered = try pixel(exported, 20, 20), bare = try pixel(exported, 80, 80)
+            #expect(zip(covered, [153, 64, 26]).allSatisfy { abs($0 - $1) <= 1 }, "base plus the clipped layer: \(covered)")
+            #expect(zip(bare, [179, 128, 102]).allSatisfy { abs($0 - $1) <= 1 }, "base plus the stack's own base: \(bare)")
+        }
+        guard GPUCanvasRenderer.shared != nil else { return }
+        session.deselect()
+        session.zoom(to: 2)
+        let difference = try compare(session, name: "stack-\(mode.rawValue)")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "\(mode.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// Soft Light as Photoshop computes it, within a few levels, in export and Copy Merged as on the canvas. Core
+    /// Graphics's own formula came out up to 25 levels lighter with a light blend color.
+    @Test func softLightMatchesPhotoshop() async throws {
+        let session = EditorSession()
+        session.createDocument(width: 10, height: 10)
+        for (value, name) in [(CGFloat(0.5), "Base"), (0.9, "Soft")] {
+            let context = try BrushRaster.context(width: 10, height: 10, mask: false)
+            context.setFillColor(CGColor(srgbRed: value, green: value, blue: value, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+            let image = try #require(context.makeImage())
+            session.insert(ImportedImage(image: image, thumbnail: image, name: name))
+        }
+        session.document!.layers[session.document!.layers.count - 1].blendMode = .softLight
+        session.selectLayer(nil)
+        session.selectAll()
+        func red(_ image: CGImage) throws -> Int {
+            let copy = try BrushRaster.copy(image)
+            return Int(try #require(copy.data).assumingMemoryBound(to: UInt8.self)[copy.bytesPerRow * 5 + 20])
+        }
+        // Photoshop: 2·0.5·(1 − 0.9) + √0.5·(2·0.9 − 1) = 0.666, 170 of 255.
+        let exported = try red(try await ImageExporter.shared.render(try #require(session.projectSnapshot())).image)
+        let merged = try red(try #require(try session.renderMergedPixels()).image)
+        #expect(abs(exported - 170) <= 2 && abs(merged - 170) <= 2, "export \(exported), Copy Merged \(merged)")
+    }
 }
