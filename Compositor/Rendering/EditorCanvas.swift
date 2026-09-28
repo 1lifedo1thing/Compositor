@@ -918,12 +918,22 @@ final class CanvasView: NSView {
     }
 
     private func drawLayers(_ document: CanvasDocument, scale: CGFloat, center: @escaping (CGPoint) -> CGPoint, in context: CGContext, onSurface: Bool = false) {
-        // Pixels being moved: the tiles drawn below follow the drag only once something reads them (see PixelMove).
+        // Pixels being moved, or a gradient: the tiles drawn below follow the drag only once something reads them (see
+        // PixelMove and GradientEdit).
         if let move = session.pixelMove {
             do { try move.applyOffset() } catch {
                 let message = error.localizedDescription
                 DispatchQueue.main.async { [weak self] in
                     self?.session.cancelPixelMove()
+                    self?.session.brushError = message
+                }
+            }
+        }
+        if let gradient = session.gradientEdit {
+            do { try gradient.applyFill() } catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async { [weak self] in
+                    self?.session.cancelGradient()
                     self?.session.brushError = message
                 }
             }
@@ -2544,9 +2554,16 @@ extension CanvasView {
     /// Whether anything on the canvas is drawn in a way only the Core Graphics canvas does yet.
     private var needsCPUCanvas: Bool {
         session.textDraft != nil || draftEffects != nil || textBoxRect != nil || session.shapeDraft != nil
-            || session.brushStroke != nil || session.gradientEdit != nil || session.pixelMove?.drawsOnGPU == false
-            || session.warpStroke != nil || strokeSurface != nil || session.transformEdit?.corners != nil
+            || session.brushStroke.map { !gpuDraws($0) } ?? false
+            || session.gradientEdit.map { $0.raster.isMask || !gpuDraws($0.raster) } ?? false
+            || session.pixelMove?.drawsOnGPU == false || strokeSurface != nil || session.transformEdit?.corners != nil
             || (session.showsPixelGrid && session.viewport.zoom >= Self.pixelGridZoom)
+    }
+
+    /// Whether the GPU canvas draws a layer being painted. Its effects, redone as it's painted (see LayerEffectsSurface),
+    /// and a mask on its own placement being painted are drawn by the Core Graphics canvas.
+    private func gpuDraws(_ stroke: BrushStroke) -> Bool {
+        stroke.layer.effects?.visible.isEmpty != false && !(stroke.isMask && stroke.layer.mask?.placement != nil)
     }
 
     /// The whole view as `draw(_:)` draws it — the backdrop, the document's shadow and checkerboard, the layers and the
@@ -2620,6 +2637,7 @@ extension CanvasView {
             if let known = folderMasks[id] { return known }
             let placed: CIImage? = byID[id].flatMap { folder in
                 guard let mask = folder.mask, mask.isEnabled else { return nil }
+                if let edit = liveMaskEdit(for: id) { return paintedMask(edit) }
                 return placement.place(mask.asset.image, transform: session.displayedTransform(for: folder), mask: true)
             }
             folderMasks[id] = placed
@@ -2635,9 +2653,116 @@ extension CanvasView {
             return result
         }
         var unsupported = false
+        // The old pixels of a layer being painted — or of its mask, painting the mask — as they were when it started.
+        func oldPixels(_ stroke: BrushStroke) -> CIImage? {
+            let asset = stroke.isMask ? stroke.layer.mask?.asset : stroke.layer.asset
+            if let raster = asset?.raster { return placement.renderer.image(raster) }
+            return asset.flatMap { placement.renderer.image($0.image, mask: stroke.isMask) }
+        }
+        // A mask being painted, placed as its stroke's grid.
+        func paintedMask(_ stroke: BrushStroke) -> CIImage? {
+            guard let grid = placement.renderer.image(stroke, base: oldPixels(stroke)) else { return nil }
+            return placement.place(live: grid, width: stroke.width, height: stroke.height, transform: stroke.paintTransform)
+        }
+        // A layer being painted, or given a gradient: its grid as the stroke leaves it (painting its mask, its old pixels
+        // through the mask as it's being left), through its own mask where its old pixels were — paint past them shows.
+        func painted(_ layer: ImageLayer, stroke: BrushStroke, opacity: Double) -> CIImage? {
+            let gridRect = CGRect(x: 0, y: 0, width: stroke.width, height: stroke.height)
+            let source = stroke.sourceRect
+            func inGrid(_ image: CIImage) -> CIImage {
+                image.transformed(by: CGAffineTransform(scaleX: source.width / image.extent.width, y: source.height / image.extent.height)
+                    .concatenating(CGAffineTransform(translationX: source.minX, y: source.minY))).cropped(to: source)
+            }
+            var grid: CIImage
+            if stroke.isMask {
+                guard let mask = placement.renderer.image(stroke, base: oldPixels(stroke)) else { return nil }
+                let pixels: CIImage?
+                if let raster = layer.asset?.raster { pixels = placement.renderer.image(raster) }
+                else { pixels = layer.asset.flatMap { placement.renderer.image($0.image) } }
+                guard let pixels else { return nil }
+                grid = GPUBlend.masked(inGrid(pixels), by: mask)
+            } else if let edit = session.gradientEdit, edit.raster === stroke {
+                // The gradient drawn here as it's dragged; its tiles are filled once, when it's committed.
+                grid = oldPixels(stroke).map(inGrid) ?? CIImage.empty()
+                if edit.hasLine, let fill = edit.fill, let fillImage = gradient(fill, stroke: stroke) {
+                    grid = fillImage.composited(over: grid)
+                }
+                grid = grid.cropped(to: gridRect)
+            } else {
+                guard let image = placement.renderer.image(stroke, base: oldPixels(stroke)) else { return nil }
+                grid = image
+                // The layer's own mask covers where its old pixels were.
+                if let owned = layer.mask {
+                    let mask: CGImage?
+                    if let maskPlacement = session.displayedMaskPlacement(for: layer) {
+                        let base = stroke.layer.transform
+                        let drawn = max(base.size.width, base.size.height) * placement.scale
+                        let steady = pow(2, ceil(log2(max(64, drawn))))
+                        mask = owned.clipImage(placement: maskPlacement, over: base,
+                            width: stroke.layer.asset?.image.width ?? Int(base.size.width.rounded()),
+                            height: stroke.layer.asset?.image.height ?? Int(base.size.height.rounded()), limit: steady)
+                    } else { mask = owned.enabledImage }
+                    if let mask, let placed = placement.renderer.image(mask, mask: true) {
+                        grid = GPUBlend.masked(grid, by: inGrid(placed).composited(over: CIImage(color: .white).cropped(to: gridRect)))
+                    }
+                }
+            }
+            guard let image = placement.place(live: grid, width: stroke.width, height: stroke.height, transform: stroke.paintTransform)
+            else { return nil }
+            return GPUBlend.faded(image, opacity)
+        }
+        // A gradient fill in the stroke's grid: over the canvas and the selection, at the fill's opacity.
+        func gradient(_ fill: GradientEdit.Fill, stroke: BrushStroke) -> CIImage? {
+            func color(_ value: CGColor) -> CIColor {
+                let c = value.converted(to: placement.renderer.space, intent: .defaultIntent, options: nil)?.components ?? [0, 0, 0, 1]
+                return CIColor(red: c[0], green: c.count > 2 ? c[1] : c[0], blue: c.count > 2 ? c[2] : c[0], alpha: c.last ?? 1,
+                               colorSpace: placement.renderer.space) ?? .black
+            }
+            guard fill.colors.count == 2 else { return nil }
+            let shading: CIImage
+            switch fill.shape {
+            case .linear:
+                shading = CIImage.empty().applyingFilter("CILinearGradient", parameters: [
+                    "inputPoint0": CIVector(cgPoint: fill.start), "inputPoint1": CIVector(cgPoint: fill.end),
+                    "inputColor0": color(fill.colors[0]), "inputColor1": color(fill.colors[1])])
+            case .radial:
+                shading = CIImage.empty().applyingFilter("CIRadialGradient", parameters: [
+                    kCIInputCenterKey: CIVector(cgPoint: fill.start), "inputRadius0": 0,
+                    "inputRadius1": hypot(fill.end.x - fill.start.x, fill.end.y - fill.start.y),
+                    "inputColor0": color(fill.colors[0]), "inputColor1": color(fill.colors[1])])
+            }
+            let toGrid = stroke.pixelToDocument.inverted()
+            var coverage = CIImage(color: .white).cropped(to: stroke.canvas)
+            if let clip = stroke.selectionClip {
+                guard let selection = clip.coverage.flatMap({ placement.renderer.image($0, mask: true) }) else { return nil }
+                let placed = selection.transformed(by: CGAffineTransform(scaleX: clip.rect.width / selection.extent.width,
+                                                                         y: clip.rect.height / selection.extent.height)
+                    .concatenating(CGAffineTransform(translationX: clip.rect.minX, y: clip.rect.minY)))
+                coverage = coverage.applyingFilter("CIBlendWithRedMask", parameters: [kCIInputBackgroundImageKey: CIImage.black,
+                                                                                      kCIInputMaskImageKey: placed])
+            }
+            let shaded = GPUBlend.faded(GPUBlend.masked(shading, by: coverage), Double(fill.opacity))
+            return shaded.transformed(by: toGrid)
+        }
         // One layer's pixels, placed, through its own mask and at its opacity — what `drawOwn` draws.
         func own(_ layer: ImageLayer) -> CIImage? {
             let opacity = layer.effectiveOpacity(in: byID)
+            // Smudge or Liquify in progress: the layer as the stroke has reshaped it so far, across the canvas.
+            if let warp = session.warpStroke, warp.layer.id == layer.id, let image = warp.image {
+                let canvas = LayerTransform(origin: .zero, size: document.size)
+                guard var placed = placement.place(transient: image, transform: canvas) else { unsupported = true; return nil }
+                if let mask = layer.mask?.clipImage(placement: layer.maskTransform, over: canvas, width: warp.width, height: warp.height, limit: 2048) {
+                    guard let placedMask = placement.place(mask, transform: canvas, mask: true) else { unsupported = true; return nil }
+                    placed = GPUBlend.masked(placed, by: placedMask)
+                }
+                return GPUBlend.faded(placed, opacity)
+            }
+            let stroke = session.brushStroke?.layer.id == layer.id ? session.brushStroke
+                : session.gradientEdit?.raster.layer.id == layer.id ? session.gradientEdit?.raster : nil
+            if let stroke {
+                guard let image = painted(layer, stroke: stroke, opacity: opacity) else { unsupported = true; return nil }
+                return image
+            }
             // Pixels being moved: the layer with the selection cut out (all of it, duplicating), the lifted pixels over it.
             if let move = session.pixelMove, move.raster.layer.id == layer.id {
                 let stroke = move.raster
@@ -2707,7 +2832,9 @@ extension CanvasView {
                                                                           kCIInputMaskImageKey: mask])
                 } ?? mask
             }
-            if let own = layer.mask?.enabledImage, let placed = placement.place(own, transform: layer.transform, mask: true) {
+            if layer.mask?.isEnabled == true, let edit = liveMaskEdit(for: layer.id), let placed = paintedMask(edit) {
+                multiply(placed)
+            } else if let own = layer.mask?.enabledImage, let placed = placement.place(own, transform: layer.transform, mask: true) {
                 multiply(placed)
             }
             if folders {

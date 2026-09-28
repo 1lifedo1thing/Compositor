@@ -159,4 +159,70 @@ import Testing
         let difference = try compare(session, name: duplicate ? "duplicating" : "moving")
         #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
+
+    /// A photo on the canvas, with a mask on it when `masked`, ready to paint.
+    private func paintable(masked: Bool = false) throws -> EditorSession {
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 500, height: 400), backingScale: 2, documentSize: nil)
+        session.createDocument(width: 600, height: 500)
+        let image = try pattern(420, 360, seed: 2)
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Photo"))
+        let index = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        session.document!.layers[index].transform.origin = CGPoint(x: 90, y: 70)
+        if masked { session.document!.layers[index].mask = LayerMask(asset: try LayerMask.asset(from: gradientMask(420, 360))) }
+        session.brushSettings.diameter = 60
+        session.foregroundColor = PaletteColor(red: 0.9, green: 0.2, blue: 0.1)
+        return session
+    }
+
+    private func stroke(_ session: EditorSession) {
+        session.beginBrush(at: CGPoint(x: 60, y: 100))
+        for x in stride(from: 70.0, through: 540, by: 10) { session.continueBrush(at: CGPoint(x: x, y: 100 + x / 3)) }
+    }
+
+    /// A brush stroke in progress, on a layer's pixels (with and without a mask on it) and on its mask.
+    @Test(arguments: [(false, false), (true, false), (true, true)])
+    func matchesWhilePainting(masked: Bool, paintingMask: Bool) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable(masked: masked)
+        session.tool = .brush
+        session.isMaskSelected = paintingMask
+        session.maskPaintWhite = false
+        stroke(session)
+        #expect(session.brushStroke != nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "painting-\(masked)-\(paintingMask)")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// A gradient being dragged, linear and radial, the radial one inside a selection.
+    @Test(arguments: [GradientShape.linear, .radial])
+    func matchesWhileDraggingAGradient(shape: GradientShape) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        session.tool = .gradient
+        session.gradientSettings.shape = shape
+        if shape == .radial {
+            session.applySelection(CGPath(ellipseIn: CGRect(x: 100, y: 80, width: 300, height: 260), transform: nil), mode: .replace, name: "Select")
+        }
+        session.beginGradient(at: CGPoint(x: 150, y: 120))
+        session.moveGradient(end: CGPoint(x: 420, y: 330))
+        #expect(session.gradientEdit?.hasLine == true)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "gradient-\(shape)")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// A Smudge stroke in progress.
+    @Test func matchesWhileSmudging() throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable(masked: true)
+        session.tool = .blur
+        session.blurMode = .smudge
+        stroke(session)
+        #expect(session.warpStroke != nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "smudge")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
 }
