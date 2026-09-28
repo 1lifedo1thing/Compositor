@@ -393,15 +393,12 @@ nonisolated enum GPUBlend {
 }
 
 nonisolated enum GPUAdjustment {
-    /// The adjustments the GPU canvas runs itself; a layer with any other falls back to the Core Graphics canvas.
-    static func supports(_ adjustment: LayerAdjustment) -> Bool {
-        switch adjustment.kind {
-        case .levels, .hsv: true
-        default: false
-        }
-    }
+    /// The adjustments the GPU canvas runs itself: all of them.
+    static func supports(_ adjustment: LayerAdjustment) -> Bool { true }
 
-    static func apply(_ adjustment: LayerAdjustment, to image: CIImage) -> CIImage {
+    /// `image` adjusted, laid out in frame pixels: `scale` frame pixels per document pixel, and `mapping` from document
+    /// pixels to the frame (for Grain, whose pattern belongs to the document).
+    static func apply(_ adjustment: LayerAdjustment, to image: CIImage, scale: CGFloat, mapping: CGAffineTransform) -> CIImage? {
         switch adjustment.kind {
         case .levels:
             guard !adjustment.levels.isIdentity else { return image }
@@ -420,8 +417,61 @@ nonisolated enum GPUAdjustment {
                 "inputCubeDimension": HueSaturationFilter.dimension,
                 "inputCubeData": HueSaturationFilter.cube(adjustment.resolvedHSV),
             ])
-        default:
-            return image
+        case .curves, .blackWhite, .colorBalance, .exposure, .gradientMap, .invert:
+            guard let cube = cube(for: adjustment) else { return nil }
+            return image.applyingFilter("CIColorCube", parameters: ["inputCubeDimension": dimension, "inputCubeData": cube])
+        case .gaussianBlur:
+            // Not clamped, as on the Core Graphics canvas: the blur spreads past the pixels' edges.
+            return image.applyingGaussianBlur(sigma: adjustment.gaussianRadius * scale)
+        case .motionBlur:
+            // Core Image's angle turns counterclockwise with y up; the frame's y points down.
+            return image.applyingFilter("CIMotionBlur", parameters: [
+                kCIInputRadiusKey: adjustment.resolvedMotionDistance * scale * PixelFilter.motionRadiusPerPixel,
+                kCIInputAngleKey: -adjustment.resolvedMotionAngle * .pi / 180,
+            ])
+        case .addNoise:
+            return GPUNoise.addNoise(to: image, mapping: mapping, amount: Float(min(400, max(0.1, adjustment.resolvedNoiseAmount))),
+                                     gaussian: adjustment.resolvedNoiseGaussian,
+                                     monochromatic: adjustment.resolvedNoiseMonochromatic, seed: adjustment.resolvedNoiseSeed)
+        case .grain:
+            return GPUNoise.addGrain(to: image, grain: adjustment.grain, scale: scale, mapping: mapping)
         }
+    }
+
+    // MARK: Color lookups
+
+    /// Points per axis of the lookups for adjustments that change each color on its own, as Hue/Saturation's.
+    static let dimension = 33
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cubes: [(adjustment: LayerAdjustment, data: Data)] = []
+
+    /// A lookup for an adjustment that changes each color on its own, made by running the adjustment itself over every
+    /// point of the lattice — so the GPU canvas shows what export makes, with nothing worked out twice.
+    static func cube(for adjustment: LayerAdjustment) -> Data? {
+        if let known = lock.withLock({ cubes.first { $0.adjustment == adjustment }?.data }) { return known }
+        let n = dimension, width = n * n
+        guard let lattice = try? BrushRaster.context(width: width, height: n, mask: false), let pixels = lattice.data else { return nil }
+        let bytes = pixels.assumingMemoryBound(to: UInt8.self)
+        func level(_ i: Int) -> UInt8 { UInt8((Double(i) * 255 / Double(n - 1)).rounded()) }
+        // Red along each row, green across blocks of rows' columns, blue down the rows: the order the lookup reads.
+        for b in 0..<n { for g in 0..<n { for r in 0..<n {
+            let i = b * lattice.bytesPerRow + (g * n + r) * 4
+            bytes[i] = level(r); bytes[i + 1] = level(g); bytes[i + 2] = level(b); bytes[i + 3] = 255
+        } } }
+        guard let source = lattice.makeImage(), let adjusted = try? adjustment.apply(source),
+              let out = try? BrushRaster.copy(adjusted), let result = out.data else { return nil }
+        let values = result.assumingMemoryBound(to: UInt8.self)
+        var floats = [Float](repeating: 1, count: n * n * n * 4)
+        for b in 0..<n { for g in 0..<n { for r in 0..<n {
+            let i = b * out.bytesPerRow + (g * n + r) * 4, o = ((b * n + g) * n + r) * 4
+            floats[o] = Float(values[i]) / 255; floats[o + 1] = Float(values[i + 1]) / 255; floats[o + 2] = Float(values[i + 2]) / 255
+        } } }
+        let data = floats.withUnsafeBufferPointer { Data(buffer: $0) }
+        lock.withLock {
+            cubes.removeAll { $0.adjustment == adjustment }
+            cubes.insert((adjustment, data), at: 0)
+            if cubes.count > 16 { cubes.removeLast() }
+        }
+        return data
     }
 }

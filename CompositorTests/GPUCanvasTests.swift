@@ -80,14 +80,15 @@ import Testing
     private struct Difference { let mean: Double; let over: Double }
 
     /// Both canvases drawn for `session`; the share of pixels more than 12 levels apart, and the mean difference.
-    private func compare(_ session: EditorSession, name: String) throws -> Difference {
+    private func compare(_ session: EditorSession, name: String, width points: Int = 500, height pointsHigh: Int = 400,
+                         backingScale: Int = 2) throws -> Difference {
         let canvas = CanvasView(session: session)
-        canvas.frame = CGRect(x: 0, y: 0, width: 500, height: 400)
-        let width = 1000, height = 800
+        canvas.frame = CGRect(x: 0, y: 0, width: points, height: pointsHigh)
+        let width = points * backingScale, height = pointsHigh * backingScale
         let cpu = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-        cpu.translateBy(x: 0, y: CGFloat(height)); cpu.scaleBy(x: 2, y: -2)
+        cpu.translateBy(x: 0, y: CGFloat(height)); cpu.scaleBy(x: CGFloat(backingScale), y: -CGFloat(backingScale))
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(cgContext: cpu, flipped: true)
         canvas.allowsGPU = false
@@ -239,5 +240,66 @@ import Testing
         session.zoom(to: 0.8)
         let difference = try compare(session, name: "new-mask-\(Int(rotation))")
         #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// Each adjustment over a photo, with a mask on it and at 80% opacity, on a canvas where the document fills the view
+    /// one to one — so noise and grain land on the same pixels on both canvases.
+    @Test(arguments: [AdjustmentKind.curves, .blackWhite, .colorBalance, .exposure, .gradientMap, .invert,
+                      .gaussianBlur, .motionBlur, .addNoise, .grain])
+    func matchesEveryAdjustment(kind: AdjustmentKind) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 600, height: 500), backingScale: 1, documentSize: nil)
+        session.createDocument(width: 600, height: 500)
+        let image = try pattern(600, 500, seed: 3)
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Photo"))
+        let small = try pattern(260, 200, seed: 5, alpha: true)
+        session.insert(ImportedImage(image: small, thumbnail: small, name: "Top"))
+        var adjustment = LayerAdjustment(kind: kind)
+        switch kind {
+        case .curves: adjustment.curves.channels[0] = [CurvePoint(x: 0, y: 20), CurvePoint(x: 120, y: 170), CurvePoint(x: 255, y: 235)]
+        case .colorBalance: adjustment.colorBalance.midCyanRed = 40; adjustment.colorBalance.shadowYellowBlue = -30
+        case .exposure: adjustment.exposure.exposure = 0.8; adjustment.exposure.gamma = 1.2
+        case .gradientMap:
+            adjustment.gradientMap.shadows = AdjustmentColor(red: 0.1, green: 0.0, blue: 0.4)
+            adjustment.gradientMap.highlights = AdjustmentColor(red: 1, green: 0.8, blue: 0.3)
+        case .gaussianBlur: adjustment.gaussianRadius = 6
+        case .motionBlur: adjustment.resolvedMotionDistance = 30; adjustment.resolvedMotionAngle = 30
+        case .addNoise: adjustment.resolvedNoiseAmount = 25; adjustment.resolvedNoiseSeed = 7
+        case .grain: adjustment.grain.amount = 60; adjustment.grain.size = 3; adjustment.grain.seed = 11
+        default: break
+        }
+        var layer = ImageLayer(name: "Adjustment", blankSize: CGSize(width: 600, height: 500))
+        layer.adjustment = adjustment
+        layer.opacity = 0.8
+        layer.mask = LayerMask(asset: try LayerMask.asset(from: gradientMask(600, 500)))
+        session.document!.layers.append(layer)
+        session.selectLayer(nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "adjustment-\(kind.rawValue)", width: 600, height: 500, backingScale: 1)
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "\(kind.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// Noise and Grain belong to the document on both canvases, wherever it sits in the view and however it's zoomed.
+    @Test(arguments: [AdjustmentKind.addNoise, .grain])
+    func patternsStayWithTheDocument(kind: AdjustmentKind) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 500, height: 400), backingScale: 2, documentSize: nil)
+        session.createDocument(width: 600, height: 500)
+        let image = try pattern(600, 500, seed: 3)
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Photo"))
+        var adjustment = LayerAdjustment(kind: kind)
+        adjustment.resolvedNoiseAmount = 25
+        adjustment.grain.amount = 60
+        adjustment.grain.size = 3
+        var layer = ImageLayer(name: "Adjustment", blankSize: CGSize(width: 600, height: 500))
+        layer.adjustment = adjustment
+        session.document!.layers.append(layer)
+        session.selectLayer(nil)
+        session.zoom(to: 0.8)
+        let difference = try compare(session, name: "pattern-\(kind.rawValue)")
+        // Shrinking, the two sample the pattern's hard edges a little differently (see matchesCoreGraphicsCanvas).
+        #expect(difference.mean < 1.5 && difference.over < 0.03, "\(kind.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
 }

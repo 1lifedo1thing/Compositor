@@ -1171,6 +1171,10 @@ final class CanvasView: NSView {
         live.adjustmentOpacity = { byID[$0]?.effectiveOpacity(in: byID) ?? 1 }
         // Adjustments run on the surface's pixels, one per screen pixel (see AdjustmentSurface).
         live.adjustmentScale = scale * LayerRenderer.deviceScale(of: context)
+        let corner = center(.zero)
+        live.adjustmentRegion = { rect in
+            CGRect(x: (rect.minX - corner.x) / scale, y: (rect.minY - corner.y) / scale, width: rect.width / scale, height: rect.height / scale)
+        }
         let area = context.boundingBoxOfClipPath
         live.adjustmentClip = { [weak self] id, ctx in
             guard let self, let layer = byID[id], layer.mask?.isEnabled == true else { return }
@@ -2826,8 +2830,9 @@ extension CanvasView {
             return GPUBlend.faded(image, opacity)
         }
         // An adjustment re-colors what's under it, through its own mask and its folders' masks, at its opacity.
-        func adjusted(_ below: CIImage, by layer: ImageLayer, adjustment: LayerAdjustment, folders: Bool) -> CIImage {
-            let changed = GPUAdjustment.apply(adjustment, to: below)
+        func adjusted(_ below: CIImage, by layer: ImageLayer, adjustment: LayerAdjustment, folders: Bool) -> CIImage? {
+            guard let changed = GPUAdjustment.apply(adjustment, to: below, scale: placement.scale, mapping: placement.mapping)
+            else { return nil }
             var coverage: CIImage?
             func multiply(_ mask: CIImage) {
                 coverage = coverage.map {
@@ -2863,7 +2868,8 @@ extension CanvasView {
             if let adjustment = layer.adjustment {
                 guard layer.maskSourceID == nil else { continue }
                 guard GPUAdjustment.supports(adjustment), mode == .normal else { return nil }
-                result = adjusted(result, by: layer, adjustment: adjustment, folders: true)
+                guard let changed = adjusted(result, by: layer, adjustment: adjustment, folders: true) else { return nil }
+                result = changed
                 continue
             }
             if let children = stacks[id] {
@@ -2878,7 +2884,8 @@ extension CanvasView {
                     guard let child = byID[childID] else { continue }
                     if let adjustment = child.adjustment {
                         guard GPUAdjustment.supports(adjustment), session.displayedBlendMode(for: child) == .normal else { return nil }
-                        group = adjusted(group, by: child, adjustment: adjustment, folders: false)
+                        guard let changed = adjusted(group, by: child, adjustment: adjustment, folders: false) else { return nil }
+                        group = changed
                     } else if let image = own(child) {
                         group = GPUBlend.blend(image, over: group, mode: session.displayedBlendMode(for: child))
                     } else if unsupported { return nil }

@@ -18,9 +18,12 @@ nonisolated final class LiveMaskRenderer {
     var adjustmentOpacity: (UUID) -> Double = { _ in 1 }
     var adjustmentClip: (UUID, CGContext) -> Void = { _, _ in }
     var adjustmentScale: CGFloat = 1
+    /// The part of the document `bounds` shows, when the context isn't laid out in document pixels (the canvas), so
+    /// Grain's and Add Noise's patterns stay with the document.
+    var adjustmentRegion: ((CGRect) -> CGRect)?
     private func adjust(_ id: UUID, in context: CGContext) {
         guard let settings = adjustment(id), let original = context.makeImage(),
-              var adjusted = try? settings.apply(original, region: bounds, scale: adjustmentScale) else { return }
+              var adjusted = try? settings.apply(original, region: adjustmentRegion?(bounds) ?? bounds, scale: adjustmentScale) else { return }
         if blendMode(id) != .normal {
             // Blend colors at full coverage, then restore the original alpha.
             // Source-over of two translucent copies would thicken soft edges.
