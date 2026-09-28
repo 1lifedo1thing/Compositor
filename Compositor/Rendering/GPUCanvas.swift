@@ -34,8 +34,6 @@ import QuartzCore
     private var frame = 0
     /// Textures not used for this many frames are let go.
     private let keepFrames = 90
-    /// The frame last sent to the GPU, waited on before a texture it may be reading is written.
-    private var lastBuffer: MTLCommandBuffer?
 
     /// A stroke in progress as one texture: the layer's old pixels (or old mask) with the stroke's tiles written in as
     /// they change, so a frame uploads only the tiles the last few dabs touched.
@@ -154,23 +152,59 @@ import QuartzCore
             entry = StrokeTexture(texture: texture, image: image)
         }
         strokes[id] = (stroke, entry, frame)
-        var waited = false
+        let writes = TileWrites(renderer: self, into: entry.texture, mask: stroke.isMask)
         for patch in stroke.patches {
             let key = patch.rect.origin, identity = ObjectIdentifier(patch.image)
             guard entry.written[key] != identity else { continue }
-            let rect = patch.rect.integral.intersection(CGRect(x: 0, y: 0, width: stroke.width, height: stroke.height))
-            guard !rect.isEmpty, patch.image.width == Int(patch.rect.width), patch.image.height == Int(patch.rect.height),
-                  let pixels = try? (stroke.isMask ? Self.grayCopy(patch.image) : BrushRaster.copy(patch.image)),
-                  let data = pixels.data else { continue }
-            // The last frame may still be reading the texture.
-            if !waited { lastBuffer?.waitUntilCompleted(); waited = true }
-            let bytes = stroke.isMask ? 1 : 4
-            let offset = Int(rect.minY - patch.rect.minY) * pixels.bytesPerRow + Int(rect.minX - patch.rect.minX) * bytes
-            entry.texture.replace(region: MTLRegionMake2D(Int(rect.minX), Int(rect.minY), Int(rect.width), Int(rect.height)),
-                                  mipmapLevel: 0, withBytes: data + offset, bytesPerRow: pixels.bytesPerRow)
-            entry.written[key] = identity
+            if writes.place(patch.image, at: patch.rect) { entry.written[key] = identity }
         }
+        writes.commit()
         return entry.image
+    }
+
+    /// Tiles written into a texture the GPU has drawn into: each is uploaded to a small texture of its own and copied into
+    /// place by the GPU, in order with everything else it does to that texture. Written straight into the texture's
+    /// memory instead, a tile isn't seen on every GPU — a virtual machine's keeps its own copy, and parts of the texture
+    /// came out empty.
+    private final class TileWrites {
+        let renderer: GPUCanvasRenderer
+        let texture: MTLTexture
+        let mask: Bool
+        private var buffer: MTLCommandBuffer?
+        private var blit: MTLBlitCommandEncoder?
+        init(renderer: GPUCanvasRenderer, into texture: MTLTexture, mask: Bool) {
+            self.renderer = renderer
+            self.texture = texture
+            self.mask = mask
+        }
+        /// Writes `image`, which covers `rect` of the texture, clipped to the texture. False when there was nothing to write.
+        @discardableResult
+        func place(_ image: CGImage, at rect: CGRect) -> Bool {
+            let bounds = rect.integral.intersection(CGRect(x: 0, y: 0, width: texture.width, height: texture.height))
+            guard !bounds.isEmpty, image.width == Int(rect.width.rounded()), image.height == Int(rect.height.rounded()),
+                  let pixels = try? (mask ? GPUCanvasRenderer.grayCopy(image) : BrushRaster.copy(image)), let data = pixels.data
+            else { return false }
+            let w = Int(bounds.width), h = Int(bounds.height)
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: texture.pixelFormat, width: w, height: h, mipmapped: false)
+            descriptor.storageMode = .shared
+            guard let staging = renderer.device.makeTexture(descriptor: descriptor) else { return false }
+            let bytes = mask ? 1 : 4
+            let offset = Int(bounds.minY - rect.minY.rounded()) * pixels.bytesPerRow + Int(bounds.minX - rect.minX.rounded()) * bytes
+            staging.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: data + offset, bytesPerRow: pixels.bytesPerRow)
+            if blit == nil {
+                buffer = renderer.queue.makeCommandBuffer()
+                blit = buffer?.makeBlitCommandEncoder()
+            }
+            blit?.copy(from: staging, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                       sourceSize: MTLSize(width: w, height: h, depth: 1), to: texture, destinationSlice: 0, destinationLevel: 0,
+                       destinationOrigin: MTLOrigin(x: Int(bounds.minX), y: Int(bounds.minY), z: 0))
+            return true
+        }
+        /// Sends the copies. Frames drawn from the texture come after them on the same queue.
+        func commit() {
+            blit?.endEncoding()
+            buffer?.commit()
+        }
     }
 
     /// A painted layer's tiles put together into one texture, redone only when the raster is replaced.
@@ -243,18 +277,10 @@ import QuartzCore
         context.render(clear, to: texture, commandBuffer: buffer,
                        bounds: CGRect(x: 0, y: 0, width: raster.width, height: raster.height), colorSpace: space)
         buffer.commit()
-        buffer.waitUntilCompleted()
-        func place(_ image: CGImage, at rect: CGRect) {
-            let bounds = rect.integral.intersection(CGRect(x: 0, y: 0, width: raster.width, height: raster.height))
-            guard !bounds.isEmpty, image.width == Int(rect.width.rounded()), image.height == Int(rect.height.rounded()),
-                  let pixels = try? (raster.isMask ? Self.grayCopy(image) : BrushRaster.copy(image)), let data = pixels.data else { return }
-            let bytes = raster.isMask ? 1 : 4
-            let offset = (Int(bounds.minY - rect.minY.rounded()) * pixels.bytesPerRow) + Int(bounds.minX - rect.minX.rounded()) * bytes
-            texture.replace(region: MTLRegionMake2D(Int(bounds.minX), Int(bounds.minY), Int(bounds.width), Int(bounds.height)),
-                            mipmapLevel: 0, withBytes: data + offset, bytesPerRow: pixels.bytesPerRow)
-        }
-        if let base = raster.base { place(base, at: raster.baseRect) }
-        for patch in raster.patches { place(patch.image, at: patch.rect) }
+        let writes = TileWrites(renderer: self, into: texture, mask: raster.isMask)
+        if let base = raster.base { writes.place(base, at: raster.baseRect) }
+        for patch in raster.patches { writes.place(patch.image, at: patch.rect) }
+        writes.commit()
         return wrap(texture, mask: raster.isMask)
     }
 
@@ -298,7 +324,6 @@ import QuartzCore
         buffer.commit()
         buffer.waitUntilScheduled()
         drawable.present()
-        lastBuffer = buffer
         endFrame()
     }
 }
