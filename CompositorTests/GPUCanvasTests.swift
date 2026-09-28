@@ -551,4 +551,19 @@ import Testing
         let difference = try compare(session, name: "soft-\(mode.rawValue)")
         #expect(difference.mean < 1.5 && difference.over < 0.005, "\(mode.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
+
+    /// Zoomed out, a layer is drawn from a reduced copy made from the full size; the full size goes once the frame is
+    /// done, as nothing draws from it, while the reductions stay for the next frame.
+    @Test func zoomedOutKeepsOnlyTheReductions() throws {
+        let renderer = try #require(GPUCanvasRenderer.shared)
+        let image = try pattern(1200, 900, seed: 1)
+        #expect(renderer.image(image, level: 2) != nil)
+        #expect(renderer.cachedLevels(of: image) == [0, 1, 2])
+        renderer.endFrame()
+        #expect(renderer.cachedLevels(of: image) == [1, 2], "the full size is let go: \(renderer.cachedLevels(of: image))")
+        // Drawn at full size, it stays.
+        #expect(renderer.image(image, level: 0) != nil)
+        renderer.endFrame()
+        #expect(renderer.cachedLevels(of: image) == [0, 1, 2])
+    }
 }

@@ -55,31 +55,78 @@ import QuartzCore
         self.device = device
         self.queue = queue
         context = CIContext(mtlCommandQueue: queue, options: [.workingColorSpace: space, .cacheIntermediates: false])
+        // Once the canvas stops redrawing, what its last frame didn't use goes; frames alone would never count past it.
+        idle = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.frame == self.lastIdleFrame { self.release(keepingLastFrame: true) }
+                self.lastIdleFrame = self.frame
+            }
+        }
+        // Short of memory, the system says so: what the last frame didn't use goes, and everything when it's critical —
+        // the next frame uploads what it needs again.
+        pressure.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.release(keepingLastFrame: !self.pressure.data.contains(.critical))
+            }
+        }
+        pressure.resume()
+    }
+    private var idle: Timer?
+    private var lastIdleFrame = -1
+    private let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+
+    /// Lets go of textures: all but the ones the last frame drew from, or all of them.
+    private func release(keepingLastFrame: Bool) {
+        let last = frame - 1
+        textures = keepingLastFrame ? textures.filter { $0.value.used >= last } : [:]
+        strokes = keepingLastFrame ? strokes.filter { $0.value.used >= last } : [:]
     }
 
     /// `image` as a texture, `level` halvings smaller (sharp reductions for zooming out, as `DownsampleCache` makes on
     /// the CPU). A mask comes back with its values in the red channel. A `transient` image — one that's replaced every
     /// frame, like a Smudge stroke's — is kept only for the frame it's drawn in, and reduced as it's drawn.
     func image(_ image: CGImage, level: Int = 0, mask: Bool = false, transient: Bool = false) -> CIImage? {
+        texture(image, level: level, mask: mask, transient: transient, drawing: true)
+    }
+
+    /// The texture for one level of `image`. Each reduction is made from the one a level up (sharp halvings, as
+    /// `DownsampleCache` makes them); one used only to make a smaller one — the full size, zoomed out — goes at the end of
+    /// the frame, as nothing draws from it. On a large document seen whole, that full size was most of the memory.
+    private func texture(_ image: CGImage, level: Int, mask: Bool, transient: Bool, drawing: Bool) -> CIImage? {
         let key = Key(id: ObjectIdentifier(image), level: transient ? 0 : level)
+        let keep = transient ? 1 : drawing || level > 0 ? keepFrames : 0
         let found: CIImage?
         if var entry = textures[key] {
             entry.used = frame
+            entry.keep = max(entry.keep, keep)
             textures[key] = entry
             found = entry.image
         } else {
             let made: CIImage?
             if level == 0 || transient {
                 made = upload(image, mask: mask)
-            } else if let full = self.image(image, level: 0, mask: mask) {
-                made = reduce(full, width: image.width, height: image.height, level: level, mask: mask)
+            } else if let larger = texture(image, level: level - 1, mask: mask, transient: false, drawing: false) {
+                made = reduce(larger, from: Self.size(image.width, image.height, level: level - 1),
+                              to: Self.size(image.width, image.height, level: level), mask: mask)
             } else { made = nil }
             guard let made else { return nil }
-            textures[key] = Entry(source: image, image: made, used: frame, keep: transient ? 1 : keepFrames)
+            textures[key] = Entry(source: image, image: made, used: frame, keep: keep)
             found = made
         }
         guard transient, level > 0, let found else { return found }
         return Self.reduced(found, width: image.width, height: image.height, level: level)
+    }
+
+    /// The levels of `image` held as textures, for checking what the cache keeps.
+    func cachedLevels(of image: CGImage) -> [Int] {
+        textures.keys.filter { $0.id == ObjectIdentifier(image) }.map(\.level).sorted()
+    }
+
+    /// A grid `level` halvings smaller, each rounded up as `DownsampleCache` rounds them.
+    static func size(_ width: Int, _ height: Int, level: Int) -> CGSize {
+        CGSize(width: max(1, (width + (1 << level) - 1) >> level), height: max(1, (height + (1 << level) - 1) >> level))
     }
 
     /// `stroke`'s grid as it stands: the layer's old pixels, or for a mask stroke its old mask (revealing past it), with
@@ -127,21 +174,26 @@ import QuartzCore
     }
 
     /// A painted layer's tiles put together into one texture, redone only when the raster is replaced.
-    func image(_ raster: RasterSnapshot, level: Int = 0) -> CIImage? {
+    func image(_ raster: RasterSnapshot, level: Int = 0) -> CIImage? { texture(raster, level: level, drawing: true) }
+
+    private func texture(_ raster: RasterSnapshot, level: Int, drawing: Bool) -> CIImage? {
         let key = Key(id: ObjectIdentifier(raster), level: level)
+        let keep = drawing || level > 0 ? keepFrames : 0
         if var entry = textures[key] {
             entry.used = frame
+            entry.keep = max(entry.keep, keep)
             textures[key] = entry
             return entry.image
         }
         let made: CIImage?
         if level == 0 {
             made = assemble(raster)
-        } else if let full = image(raster, level: 0) {
-            made = reduce(full, width: raster.width, height: raster.height, level: level, mask: raster.isMask)
+        } else if let larger = texture(raster, level: level - 1, drawing: false) {
+            made = reduce(larger, from: Self.size(raster.width, raster.height, level: level - 1),
+                          to: Self.size(raster.width, raster.height, level: level), mask: raster.isMask)
         } else { made = nil }
         guard let made else { return nil }
-        textures[key] = Entry(source: raster, image: made, used: frame, keep: keepFrames)
+        textures[key] = Entry(source: raster, image: made, used: frame, keep: keep)
         return made
     }
 
@@ -216,10 +268,13 @@ import QuartzCore
             .cropped(to: CGRect(x: 0, y: 0, width: w, height: h))
     }
 
-    /// A sharp copy `level` halvings smaller, kept as a texture of its own.
-    private func reduce(_ full: CIImage, width: Int, height: Int, level: Int, mask: Bool) -> CIImage? {
-        let w = max(1, (width + (1 << level) - 1) >> level), h = max(1, (height + (1 << level) - 1) >> level)
-        let reduced = Self.reduced(full, width: width, height: height, level: level)
+    /// `larger` (`from` in size) sharply reduced to `to`, kept as a texture of its own.
+    private func reduce(_ larger: CIImage, from: CGSize, to: CGSize, mask: Bool) -> CIImage? {
+        let w = Int(to.width), h = Int(to.height)
+        let sx = to.width / from.width, sy = to.height / from.height
+        let reduced = larger.clampedToExtent()
+            .applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: sy, kCIInputAspectRatioKey: sx / sy])
+            .cropped(to: CGRect(x: 0, y: 0, width: w, height: h))
         guard let texture = texture(width: w, height: h, mask: mask), let buffer = queue.makeCommandBuffer() else { return nil }
         // A mask's values carry no color space; rendered in the working space, they're written as they are.
         context.render(reduced, to: texture, commandBuffer: buffer, bounds: CGRect(x: 0, y: 0, width: w, height: h),
