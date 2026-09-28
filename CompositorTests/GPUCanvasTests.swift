@@ -225,4 +225,19 @@ import Testing
         let difference = try compare(session, name: "smudge")
         #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
+
+    /// A new mask is a single white pixel stretched over its layer: it shows the layer whole, not faded.
+    @Test(arguments: [0.0, 25.0])
+    func aNewMaskRevealsTheWholeLayer(rotation: CGFloat) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        let index = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        session.document!.layers[index].transform.rotation = rotation
+        session.document!.layers[index].transform.size = CGSize(width: 380, height: 300)
+        session.addLayerMask()
+        #expect(session.document!.layers[index].mask?.asset.image.width == 1)
+        session.zoom(to: 0.8)
+        let difference = try compare(session, name: "new-mask-\(Int(rotation))")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
 }

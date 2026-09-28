@@ -2673,7 +2673,7 @@ extension CanvasView {
             let gridRect = CGRect(x: 0, y: 0, width: stroke.width, height: stroke.height)
             let source = stroke.sourceRect
             func inGrid(_ image: CIImage) -> CIImage {
-                image.transformed(by: CGAffineTransform(scaleX: source.width / image.extent.width, y: source.height / image.extent.height)
+                image.clampedToExtent().transformed(by: CGAffineTransform(scaleX: source.width / image.extent.width, y: source.height / image.extent.height)
                     .concatenating(CGAffineTransform(translationX: source.minX, y: source.minY))).cropped(to: source)
             }
             var grid: CIImage

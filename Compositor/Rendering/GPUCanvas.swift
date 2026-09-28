@@ -96,7 +96,7 @@ import QuartzCore
             // Transparent past the old pixels; a mask reveals past its old values.
             var start = (stroke.isMask ? CIImage(color: .white) : CIImage.clear).cropped(to: grid)
             if let base {
-                let placed = base.transformed(by: CGAffineTransform(
+                let placed = base.clampedToExtent().transformed(by: CGAffineTransform(
                     scaleX: stroke.sourceRect.width / base.extent.width, y: stroke.sourceRect.height / base.extent.height)
                     .concatenating(CGAffineTransform(translationX: stroke.sourceRect.minX, y: stroke.sourceRect.minY)))
                 start = placed.cropped(to: stroke.sourceRect).composited(over: start)
@@ -303,12 +303,21 @@ final class MetalCanvasView: NSView {
         // transparent at its edges can have a smaller extent than its grid.
         let reduced = CGSize(width: max(1, (width + (1 << level) - 1) >> level), height: max(1, (height + (1 << level) - 1) >> level))
         let toFull = CGAffineTransform(scaleX: CGFloat(width) / reduced.width, y: CGFloat(height) / reduced.height)
-        let placement = toFull
-            .concatenating(BrushRaster.pixelToDocument(transform, width: width, height: height))
-            .concatenating(mapping)
+        let toFrame = BrushRaster.pixelToDocument(transform, width: width, height: height).concatenating(mapping)
         let upright = transform.radians == 0 && abs(abs(factor) - 1) < 0.001 && level == 0
         let sampled = transform.sampling == .nearest || upright ? image.samplingNearest() : image
-        return sampled.transformed(by: placement)
+        // Sampled up to its edge with its own edge pixels, and then cut to the layer's outline, as Core Graphics draws an
+        // image into a rectangle. Smoothed against the transparency past its edge instead, a small image stretched over
+        // a layer — a new mask is a single pixel — would come out faded all over.
+        let placed = sampled.clampedToExtent().transformed(by: toFull.concatenating(toFrame))
+        let grid = CGRect(x: 0, y: 0, width: width, height: height)
+        if toFrame.b == 0, toFrame.c == 0 { return placed.cropped(to: grid.applying(toFrame)) }
+        // Turned, the outline is drawn at about screen size before it's turned, so its edges soften over one screen pixel
+        // whatever the image's size.
+        let sx = max(1, hypot(toFrame.a, toFrame.b)), sy = max(1, hypot(toFrame.c, toFrame.d))
+        let outline = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: CGFloat(width) * sx, height: CGFloat(height) * sy))
+            .transformed(by: CGAffineTransform(scaleX: 1 / sx, y: 1 / sy).concatenating(toFrame))
+        return GPUBlend.masked(placed, by: outline)
     }
 
     func place(_ image: CGImage, transform: LayerTransform, mask: Bool = false) -> CIImage? {
@@ -320,8 +329,11 @@ final class MetalCanvasView: NSView {
     /// An image that changes from frame to frame (`width` × `height`, at its extent's origin), placed like `place`, with
     /// its reductions computed as it's drawn.
     func place(live image: CIImage, width: Int, height: Int, transform: LayerTransform) -> CIImage? {
-        place(width: width, height: height, transform: transform) { level in
-            level == 0 ? image : GPUCanvasRenderer.reduced(image, width: width, height: height, level: level)
+        // Transparent to the grid's edge, so the edge pixels carried past it are the grid's own.
+        let grid = CGRect(x: 0, y: 0, width: width, height: height)
+        let full = image.cropped(to: grid).composited(over: CIImage.clear.cropped(to: grid))
+        return place(width: width, height: height, transform: transform) { level in
+            level == 0 ? full : GPUCanvasRenderer.reduced(full, width: width, height: height, level: level)
         }
     }
 
