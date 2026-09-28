@@ -849,6 +849,7 @@ final class CanvasView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if drawOnGPU(dirtyRect) { return }
         defer { drawTextBoxDraft() }
         NSColor(white: 0.105, alpha: 1).setFill()
         dirtyRect.fill()
@@ -1205,6 +1206,16 @@ final class CanvasView: NSView {
 
     /// The effects surface for the layer being painted, made when the stroke starts and updated as it goes.
     private var strokeSurface: LayerEffectsSurface?
+    /// Where the GPU draws the canvas, under the overlays (see `drawOnGPU`).
+    var gpuView: MetalCanvasView?
+    /// Off, every frame is drawn with Core Graphics.
+    var allowsGPU = true
+    private var snapshotting = false
+    override func cacheDisplay(in rect: NSRect, to bitmapImageRep: NSBitmapImageRep) {
+        snapshotting = true
+        defer { snapshotting = false }
+        super.cacheDisplay(in: rect, to: bitmapImageRep)
+    }
     private func strokeSurface(layer: ImageLayer, stroke: BrushStroke, mask: CGImage?) -> LayerEffectsSurface? {
         guard let effects = layer.effects?.visible, !effects.isEmpty, effects.isValid else { return nil }
         let grid = CGSize(width: stroke.width, height: stroke.height)
@@ -2464,5 +2475,273 @@ final class CanvasView: NSView {
         if let window, session.tool == .move {
             updateTransformCursor(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
         }
+    }
+}
+
+// MARK: GPU canvas
+
+extension CanvasView {
+    /// Draws the frame on the GPU (see `GPUCanvasRenderer`) and reports whether it did. When something on the canvas
+    /// needs the Core Graphics canvas instead — painting, text being edited, a distortion, an adjustment the GPU doesn't
+    /// run — the Metal view is hidden and the frame is drawn as before.
+    func drawOnGPU(_ dirtyRect: NSRect) -> Bool {
+        // Only on screen: a snapshot of the view (a test's, or a print) is drawn with Core Graphics.
+        guard allowsGPU, !snapshotting, !Self.gpuDisabled, window != nil, NSGraphicsContext.current?.isDrawingToScreen == true,
+              let renderer = GPUCanvasRenderer.shared, let document = session.document else {
+            return hideGPUView(dirtyRect)
+        }
+        let view = gpuView ?? makeGPUView()
+        let scale = session.viewport.backingScale
+        view.fit(scale: scale)
+        guard let frame = gpuFrame(document, renderer: renderer, size: view.metalLayer.drawableSize) else {
+            return hideGPUView(dirtyRect)
+        }
+        if view.isHidden { view.isHidden = false }
+        renderer.present(frame, in: view.metalLayer)
+        return true
+    }
+
+    /// Set `CompositorCPUCanvas` to draw every frame with Core Graphics, to compare the two.
+    static let gpuDisabled = UserDefaults.standard.bool(forKey: "CompositorCPUCanvas")
+
+    private func makeGPUView() -> MetalCanvasView {
+        let view = MetalCanvasView(frame: bounds)
+        view.autoresizingMask = [.width, .height]
+        view.isHidden = true
+        addSubview(view, positioned: .below, relativeTo: subviews.first)
+        gpuView = view
+        return view
+    }
+
+    /// Uncovers the Core Graphics canvas. It hasn't been drawn while the GPU showed the frame, so a partial redraw
+    /// would leave the rest out of date: the GPU's last frame stays up until the whole view has been drawn.
+    private func hideGPUView(_ dirtyRect: NSRect) -> Bool {
+        guard let view = gpuView, !view.isHidden else { return false }
+        if dirtyRect.contains(bounds) {
+            view.isHidden = true
+            return false
+        }
+        DispatchQueue.main.async { [weak self] in self?.needsDisplay = true }
+        return true
+    }
+
+    /// The frame the GPU would draw, `size` screen pixels across, for comparing with the Core Graphics canvas.
+    func gpuFrame(size: CGSize) -> CIImage? {
+        guard let renderer = GPUCanvasRenderer.shared, let document = session.document else { return nil }
+        return gpuFrame(document, renderer: renderer, size: size)
+    }
+
+    /// Whether anything on the canvas is drawn in a way only the Core Graphics canvas does yet.
+    private var needsCPUCanvas: Bool {
+        session.textDraft != nil || draftEffects != nil || textBoxRect != nil || session.shapeDraft != nil
+            || session.brushStroke != nil || session.gradientEdit != nil || session.pixelMove != nil
+            || session.warpStroke != nil || strokeSurface != nil || session.transformEdit?.corners != nil
+            || (session.showsPixelGrid && session.viewport.zoom >= Self.pixelGridZoom)
+    }
+
+    /// The whole view as `draw(_:)` draws it — the backdrop, the document's shadow and checkerboard, the layers and the
+    /// document's edge — in screen pixels, `size` across. Nil when the Core Graphics canvas has to draw it.
+    private func gpuFrame(_ document: CanvasDocument, renderer: GPUCanvasRenderer, size: CGSize) -> CIImage? {
+        guard !needsCPUCanvas else { return nil }
+        let viewport = session.viewport
+        let device = viewport.backingScale
+        let pixels = renderBounds ?? CGRect(origin: .zero, size: document.size)
+        let origin = viewport.documentRect(document.size).origin
+        let perPixel = viewport.pointsPerPixel * device
+        let mapping = CGAffineTransform(a: perPixel, b: 0, c: 0, d: perPixel, tx: origin.x * device, ty: origin.y * device)
+        let full = CGRect(origin: .zero, size: size)
+        let rect = pixels.applying(mapping)
+        func gray(_ white: CGFloat, alpha: CGFloat = 1) -> CIImage {
+            CIImage(color: CIColor(red: white, green: white, blue: white, alpha: alpha))
+        }
+        var frame = gray(0.105).cropped(to: full)
+        guard rect.intersects(full) else { return frame }
+        // The document's shadow, then its checkerboard: 10-point squares from its top-left corner.
+        let shadow = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35)).cropped(to: rect)
+            .transformed(by: CGAffineTransform(translationX: 0, y: 3 * device)).applyingGaussianBlur(sigma: 7 * device)
+        frame = shadow.composited(over: frame)
+        let tile = 10 * device
+        let squares = gray(0.35).cropped(to: CGRect(x: 0, y: 0, width: tile, height: tile))
+            .composited(over: gray(0.30).cropped(to: CGRect(x: tile, y: 0, width: tile, height: tile)))
+            .composited(over: gray(0.30).cropped(to: CGRect(x: 0, y: tile, width: tile, height: tile)))
+            .composited(over: gray(0.35).cropped(to: CGRect(x: tile, y: tile, width: tile, height: tile)))
+        let offset = NSAffineTransform()
+        offset.translateX(by: rect.minX, yBy: rect.minY)
+        let checkerboard = squares.applyingFilter("CIAffineTile", parameters: [kCIInputTransformKey: offset]).cropped(to: rect)
+        frame = checkerboard.composited(over: frame)
+        // From 200% the document's own pixels are composited one to one and enlarged as crisp squares.
+        let crisp = viewport.zoom >= Self.crispZoom
+        let placement = GPUPlacement(mapping: crisp ? .identity : mapping, scale: crisp ? 1 : perPixel, renderer: renderer)
+        guard var layers = gpuLayers(document, placement: placement) else { return nil }
+        if crisp { layers = layers.cropped(to: pixels).samplingNearest().transformed(by: mapping) }
+        frame = layers.cropped(to: rect).composited(over: frame)
+        // The document's edge: a one-pixel line centered on it.
+        let edge = gray(1, alpha: 0.13)
+        for line in [CGRect(x: rect.minX - 0.5, y: rect.minY - 0.5, width: rect.width + 1, height: 1),
+                     CGRect(x: rect.minX - 0.5, y: rect.maxY - 0.5, width: rect.width + 1, height: 1),
+                     CGRect(x: rect.minX - 0.5, y: rect.minY + 0.5, width: 1, height: rect.height - 1),
+                     CGRect(x: rect.maxX - 0.5, y: rect.minY + 0.5, width: 1, height: rect.height - 1)] {
+            frame = edge.cropped(to: line).composited(over: frame)
+        }
+        return frame.cropped(to: full)
+    }
+
+    /// The layers composited as `drawLayers` composites them, over nothing. Nil when a layer needs the Core Graphics
+    /// canvas.
+    private func gpuLayers(_ document: CanvasDocument, placement: GPUPlacement) -> CIImage? {
+        session.effectsPreviews.prepare(layers: document.layers)
+        let byID = Dictionary(uniqueKeysWithValues: document.layers.map { ($0.id, $0) })
+        let ids = document.renderLayers.map(\.id)
+        // Clipping stacks, as `LiveMaskRenderer.prepareStacks` finds them.
+        var stacks: [UUID: [UUID]] = [:], stacked = Set<UUID>()
+        for (index, base) in ids.enumerated() where byID[base]?.maskSourceID == nil && byID[base]?.adjustment == nil {
+            var children: [UUID] = []
+            for child in ids.dropFirst(index + 1) {
+                guard byID[child]?.maskSourceID == base, byID[child]?.parentID == byID[base]?.parentID else { break }
+                children.append(child)
+            }
+            guard !children.isEmpty else { continue }
+            stacks[base] = children
+            stacked.formUnion(children)
+        }
+        // Folder masks, placed once each.
+        var folderMasks: [UUID: CIImage?] = [:]
+        func folderMask(_ id: UUID) -> CIImage? {
+            if let known = folderMasks[id] { return known }
+            let placed: CIImage? = byID[id].flatMap { folder in
+                guard let mask = folder.mask, mask.isEnabled else { return nil }
+                return placement.place(mask.asset.image, transform: session.displayedTransform(for: folder), mask: true)
+            }
+            folderMasks[id] = placed
+            return placed
+        }
+        func clippedByFolders(_ id: UUID, _ image: CIImage) -> CIImage {
+            var result = image, folder = byID[id]?.parentID, depth = 0
+            while let current = folder, depth < 64 {
+                if let mask = folderMask(current) { result = GPUBlend.masked(result, by: mask) }
+                folder = byID[current]?.parentID
+                depth += 1
+            }
+            return result
+        }
+        var unsupported = false
+        // One layer's pixels, placed, through its own mask and at its opacity — what `drawOwn` draws.
+        func own(_ layer: ImageLayer) -> CIImage? {
+            let opacity = layer.effectiveOpacity(in: byID)
+            guard layer.asset != nil || session.filterEdit?.previewImage(for: layer.id) != nil else { return nil }
+            if let distorted = session.distortPreview(for: layer) {
+                guard var image = placement.place(distorted.image, transform: distorted.transform) else { unsupported = true; return nil }
+                if let mask = distorted.mask.flatMap({ placement.place($0, transform: distorted.transform, mask: true) }) {
+                    image = GPUBlend.masked(image, by: mask)
+                }
+                return GPUBlend.faded(image, opacity)
+            }
+            let transform = session.displayedTransform(for: layer)
+            // A mask placed apart from its layer is resampled into the layer's grid, as the Core Graphics canvas does.
+            let mask: CGImage? = {
+                guard let owned = layer.mask else { return nil }
+                if let distorted = session.maskDistortPreview(for: layer) { return distorted }
+                guard let maskPlacement = session.displayedMaskPlacement(for: layer) else { return owned.enabledImage }
+                let drawn = max(transform.size.width, transform.size.height) * placement.scale
+                let steady = pow(2, ceil(log2(max(64, drawn))))
+                return owned.clipImage(placement: maskPlacement, over: transform,
+                    width: layer.asset?.image.width ?? Int(transform.size.width.rounded()),
+                    height: layer.asset?.image.height ?? Int(transform.size.height.rounded()),
+                    limit: session.transformEdit != nil ? min(2048, steady) : steady)
+            }()
+            if layer.asset != nil,
+               let effects = session.effectsPreviews.preview(for: layer, mask: mask, transform: transform,
+                    maskPlacement: session.displayedMaskPlacement(for: layer), completion: { [weak self] in
+                        self?.needsDisplay = true
+                    }) {
+                let grown = effects.placement ?? LayerEffectsRenderer.placed(transform, image: effects.image, inset: effects.inset)
+                guard let image = placement.place(effects.image, transform: grown) else { unsupported = true; return nil }
+                return GPUBlend.faded(image, opacity)
+            }
+            let placed: CIImage?
+            if let shaped = session.shapeTransformPreview(for: layer, transform: transform) {
+                placed = placement.place(shaped, transform: transform)
+            } else if let raster = layer.asset?.raster, session.hueSaturation?.previewImage(for: layer.id) == nil,
+                      session.levels?.previewImage(for: layer.id) == nil, session.filterEdit?.previewImage(for: layer.id) == nil {
+                placed = placement.place(raster, transform: transform)
+            } else if let image = session.filterEdit?.previewImage(for: layer.id) ?? session.levels?.previewImage(for: layer.id)
+                        ?? session.hueSaturation?.previewImage(for: layer.id) ?? layer.asset?.image {
+                placed = placement.place(image, transform: transform)
+            } else { return nil }
+            guard var image = placed else { unsupported = true; return nil }
+            if let mask {
+                guard let placedMask = placement.place(mask, transform: transform, mask: true) else { unsupported = true; return nil }
+                image = GPUBlend.masked(image, by: placedMask)
+            }
+            return GPUBlend.faded(image, opacity)
+        }
+        // An adjustment re-colors what's under it, through its own mask and its folders' masks, at its opacity.
+        func adjusted(_ below: CIImage, by layer: ImageLayer, adjustment: LayerAdjustment, folders: Bool) -> CIImage {
+            let changed = GPUAdjustment.apply(adjustment, to: below)
+            var coverage: CIImage?
+            func multiply(_ mask: CIImage) {
+                coverage = coverage.map {
+                    $0.applyingFilter("CIBlendWithRedMask", parameters: [kCIInputBackgroundImageKey: CIImage.black,
+                                                                          kCIInputMaskImageKey: mask])
+                } ?? mask
+            }
+            if let own = layer.mask?.enabledImage, let placed = placement.place(own, transform: layer.transform, mask: true) {
+                multiply(placed)
+            }
+            if folders {
+                var folder = layer.parentID, depth = 0
+                while let current = folder, depth < 64 {
+                    if let mask = folderMask(current) { multiply(mask) }
+                    folder = byID[current]?.parentID
+                    depth += 1
+                }
+            }
+            let opacity = layer.effectiveOpacity(in: byID)
+            if opacity < 1 {
+                multiply(CIImage(color: CIColor(red: opacity, green: opacity, blue: opacity)))
+            }
+            guard let coverage else { return changed }
+            return changed.applyingFilter("CIBlendWithRedMask", parameters: [kCIInputBackgroundImageKey: below,
+                                                                              kCIInputMaskImageKey: coverage])
+        }
+        var result = CIImage.empty()
+        for id in ids where !stacked.contains(id) {
+            guard let layer = byID[id] else { continue }
+            let mode = session.displayedBlendMode(for: layer)
+            if let adjustment = layer.adjustment {
+                guard layer.maskSourceID == nil else { continue }
+                guard GPUAdjustment.supports(adjustment), mode == .normal else { return nil }
+                result = adjusted(result, by: layer, adjustment: adjustment, folders: true)
+                continue
+            }
+            if let children = stacks[id] {
+                // The base's pixels, opaque, take the layers clipped to it; the stack then keeps the base's coverage.
+                guard let base = own(layer) else {
+                    if unsupported { return nil }
+                    continue
+                }
+                var group = base.applyingFilter("CIColorMatrix", parameters: [
+                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)])
+                for childID in children {
+                    guard let child = byID[childID] else { continue }
+                    if let adjustment = child.adjustment {
+                        guard GPUAdjustment.supports(adjustment), session.displayedBlendMode(for: child) == .normal else { return nil }
+                        group = adjusted(group, by: child, adjustment: adjustment, folders: false)
+                    } else if let image = own(child) {
+                        group = GPUBlend.blend(image, over: group, mode: session.displayedBlendMode(for: child))
+                    } else if unsupported { return nil }
+                }
+                let stack = group.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: CIImage.empty(),
+                                                                                       kCIInputMaskImageKey: base])
+                result = GPUBlend.blend(clippedByFolders(id, stack), over: result, mode: mode)
+                continue
+            }
+            // A layer masked by another's coverage, outside a clipping stack.
+            guard layer.maskSourceID == nil else { return nil }
+            if let image = own(layer) {
+                result = GPUBlend.blend(clippedByFolders(id, image), over: result, mode: mode)
+            } else if unsupported { return nil }
+        }
+        return result
     }
 }
