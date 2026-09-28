@@ -141,4 +141,22 @@ import Testing
         #expect(difference.mean < 1.5 && difference.over < (zoom < 1 ? 0.03 : 0.01),
                 "zoom \(zoom): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
+
+    /// Selected pixels being dragged: the GPU draws them from the lifted pixels, the Core Graphics canvas from the
+    /// rebuilt tiles.
+    @Test(arguments: [false, true])
+    func matchesWhileMovingPixels(duplicate: Bool) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 500, height: 400), backingScale: 2, documentSize: nil)
+        session.createDocument(width: 600, height: 500)
+        let image = try pattern(600, 500, seed: 2)
+        session.insert(ImportedImage(image: image, thumbnail: image, name: "Photo"))
+        session.applySelection(CGPath(ellipseIn: CGRect(x: 120, y: 100, width: 220, height: 160), transform: nil), mode: .replace, name: "Select")
+        #expect(session.beginPixelMove(duplicate: duplicate))
+        session.movePixels(by: CGSize(width: 90, height: 60))
+        session.zoom(to: 1)
+        let difference = try compare(session, name: duplicate ? "duplicating" : "moving")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
 }

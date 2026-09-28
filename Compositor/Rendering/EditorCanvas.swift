@@ -918,6 +918,16 @@ final class CanvasView: NSView {
     }
 
     private func drawLayers(_ document: CanvasDocument, scale: CGFloat, center: @escaping (CGPoint) -> CGPoint, in context: CGContext, onSurface: Bool = false) {
+        // Pixels being moved: the tiles drawn below follow the drag only once something reads them (see PixelMove).
+        if let move = session.pixelMove {
+            do { try move.applyOffset() } catch {
+                let message = error.localizedDescription
+                DispatchQueue.main.async { [weak self] in
+                    self?.session.cancelPixelMove()
+                    self?.session.brushError = message
+                }
+            }
+        }
         // Text editing just ended: if the layer now holds the text as it was last typed, its effects from the edit stand
         // in until they're rebuilt from the committed pixels, so they don't blink off for a frame.
         if session.textDraft == nil, let built = draftEffects, let source = draftEffectsSource {
@@ -2534,7 +2544,7 @@ extension CanvasView {
     /// Whether anything on the canvas is drawn in a way only the Core Graphics canvas does yet.
     private var needsCPUCanvas: Bool {
         session.textDraft != nil || draftEffects != nil || textBoxRect != nil || session.shapeDraft != nil
-            || session.brushStroke != nil || session.gradientEdit != nil || session.pixelMove != nil
+            || session.brushStroke != nil || session.gradientEdit != nil || session.pixelMove?.drawsOnGPU == false
             || session.warpStroke != nil || strokeSurface != nil || session.transformEdit?.corners != nil
             || (session.showsPixelGrid && session.viewport.zoom >= Self.pixelGridZoom)
     }
@@ -2628,6 +2638,18 @@ extension CanvasView {
         // One layer's pixels, placed, through its own mask and at its opacity — what `drawOwn` draws.
         func own(_ layer: ImageLayer) -> CIImage? {
             let opacity = layer.effectiveOpacity(in: byID)
+            // Pixels being moved: the layer with the selection cut out (all of it, duplicating), the lifted pixels over it.
+            if let move = session.pixelMove, move.raster.layer.id == layer.id {
+                let stroke = move.raster
+                guard let lifted = stroke.lifted, let target = stroke.liftedTarget(offset: move.offset),
+                      let rest = move.duplicate ? stroke.original : stroke.holed,
+                      let below = placement.place(rest, transform: stroke.transform(for: stroke.sourceRect)),
+                      let above = placement.place(lifted.image, transform: stroke.transform(for: target)) else {
+                    unsupported = true
+                    return nil
+                }
+                return GPUBlend.faded(above.composited(over: below), opacity)
+            }
             guard layer.asset != nil || session.filterEdit?.previewImage(for: layer.id) != nil else { return nil }
             if let distorted = session.distortPreview(for: layer) {
                 guard var image = placement.place(distorted.image, transform: distorted.transform) else { unsupported = true; return nil }

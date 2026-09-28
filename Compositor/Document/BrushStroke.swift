@@ -718,7 +718,12 @@ final class BrushStroke {
     // MARK: Moving selected pixels
 
     /// Selected image pixels cut out of the layer, in layer pixel coordinates.
-    private var lifted: (image: CGImage, rect: CGRect)?
+    private(set) var lifted: (image: CGImage, rect: CGRect)?
+    /// The layer's own pixels (at `sourceRect`) with the selection cut out, made once as the pixels are lifted: the GPU
+    /// canvas draws a move as this with the lifted pixels over it, rather than rebuilding tiles as the pointer moves.
+    private(set) var holed: CGImage?
+    /// The layer's own pixels, for a duplicating move, which leaves them all in place.
+    var original: CGImage? { source }
     private var moveTiles = Set<Int>()
 
     /// Cuts the selected pixels out of the original image. False when nothing is lifted.
@@ -736,17 +741,32 @@ final class BrushStroke {
         BrushRaster.draw(source, in: sourceRect.offsetBy(dx: -region.minX, dy: -region.minY), mask: false, context: context)
         guard let image = context.makeImage() else { throw ExportError.render }
         lifted = (image, region)
+        let rest = try BrushRaster.context(width: Int(sourceRect.width), height: Int(sourceRect.height), mask: false)
+        BrushRaster.draw(source, in: CGRect(origin: .zero, size: sourceRect.size), mask: false, context: rest)
+        rest.translateBy(x: -sourceRect.minX, y: -sourceRect.minY)
+        rest.concatenate(inverse)
+        selectionClip.apply(to: rest)
+        rest.setBlendMode(.destinationOut)
+        rest.setFillColor(gray: 0, alpha: 1)
+        rest.fill(selectionClip.rect)
+        holed = rest.makeImage()
         return true
+    }
+
+    /// Where the lifted pixels land, in layer pixel coordinates, moved `offset` document pixels.
+    func liftedTarget(offset: CGSize) -> CGRect? {
+        guard let lifted else { return nil }
+        let inverse = pixelToDocument.inverted()
+        let zero = CGPoint.zero.applying(inverse)
+        let moved = CGPoint(x: offset.width, y: offset.height).applying(inverse)
+        return lifted.rect.offsetBy(dx: moved.x - zero.x, dy: moved.y - zero.y)
     }
 
     /// Rebuilds the affected tiles from the original: the selection becomes a transparent
     /// hole and the lifted pixels are placed `offset` document pixels away.
     func moveLifted(by offset: CGSize, duplicate: Bool = false) throws {
-        guard let lifted, let selectionClip else { return }
+        guard let lifted, let selectionClip, let target = liftedTarget(offset: offset) else { return }
         let inverse = pixelToDocument.inverted()
-        let zero = CGPoint.zero.applying(inverse)
-        let moved = CGPoint(x: offset.width, y: offset.height).applying(inverse)
-        let target = lifted.rect.offsetBy(dx: moved.x - zero.x, dy: moved.y - zero.y)
         let whole = target.minX == target.minX.rounded() && target.minY == target.minY.rounded()
         let needed = lifted.rect.union(target).integral.intersection(CGRect(x: 0, y: 0, width: width, height: height))
         var keys = moveTiles
