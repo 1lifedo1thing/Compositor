@@ -21,6 +21,15 @@ nonisolated final class LiveMaskRenderer {
     /// The part of the document `bounds` shows, when the context isn't laid out in document pixels (the canvas), so
     /// Grain's and Add Noise's patterns stay with the document.
     var adjustmentRegion: ((CGRect) -> CGRect)?
+    /// Pixels per unit of `bounds` for the surfaces made along the way (a clipping stack, a coverage): the screen's, on
+    /// the canvas, so they're as sharp as what they're drawn into.
+    var resolution: CGFloat = 1
+    /// `bounds` in the surfaces' pixels, and whether a surface that size is allowed.
+    private var pixelSize: (width: Int, height: Int)? {
+        let w = Int((bounds.width * resolution).rounded()), h = Int((bounds.height * resolution).rounded())
+        guard w > 0, h > 0, CGFloat(w * h) <= DocumentLimits.maxSurfaceExtent else { return nil }
+        return (w, h)
+    }
     private func adjust(_ id: UUID, in context: CGContext) {
         guard let settings = adjustment(id), let original = context.makeImage(),
               var adjusted = try? settings.apply(original, region: adjustmentRegion?(bounds) ?? bounds, scale: adjustmentScale) else { return }
@@ -40,9 +49,12 @@ nonisolated final class LiveMaskRenderer {
             layer_unpremultiply_opaque(pixels, base.bytesPerRow, w, h)
             layer_unpremultiply_opaque(top.data!.assumingMemoryBound(to: UInt8.self), top.bytesPerRow, w, h)
             guard let foreground = top.makeImage() else { return }
-            base.setBlendMode(blendMode(id).cgMode)
-            base.translateBy(x: 0, y: CGFloat(h)); base.scaleBy(x: 1, y: -1)
-            base.draw(foreground, in: rect)
+            // Core Graphics has no Linear Dodge and the like, and gets Color Burn and Dodge wrong (see SeparableBlend).
+            if !SeparableBlend.blend(foreground, over: base, mode: blendMode(id)) {
+                base.setBlendMode(blendMode(id).cgMode)
+                base.translateBy(x: 0, y: CGFloat(h)); base.scaleBy(x: 1, y: -1)
+                base.draw(foreground, in: rect)
+            }
             layer_restore_alpha(pixels, base.bytesPerRow, coverage, alpha.bytesPerRow, w, h)
             guard let result = base.makeImage() else { return }
             adjusted = result
@@ -84,18 +96,17 @@ nonisolated final class LiveMaskRenderer {
             if source(id) == nil { adjust(id, in: context) }
             return
         }
-        guard let children = stacks[id], bounds.width > 0, bounds.height > 0,
-              bounds.width * bounds.height <= DocumentLimits.maxSurfaceExtent,
-              let group = try? BrushRaster.context(width: Int(bounds.width), height: Int(bounds.height), mask: false),
-              let alpha = try? BrushRaster.context(width: Int(bounds.width), height: Int(bounds.height), mask: true) else {
+        guard let children = stacks[id], let (w, h) = pixelSize,
+              let group = try? BrushRaster.context(width: w, height: h, mask: false),
+              let alpha = try? BrushRaster.context(width: w, height: h, mask: true) else {
             if let children = stacks[id] { stacked.subtract(children) }
             draw(id, in: context); return
         }
+        group.scaleBy(x: resolution, y: resolution)
         group.translateBy(x: -bounds.minX, y: -bounds.minY)
         drawOwn(id, group)
         let pixels = group.data!.assumingMemoryBound(to: UInt8.self)
         let coverage = alpha.data!.assumingMemoryBound(to: UInt8.self)
-        let w = Int(bounds.width), h = Int(bounds.height)
         layer_extract_alpha(pixels, group.bytesPerRow, coverage, alpha.bytesPerRow, w, h)
         layer_unpremultiply_opaque(pixels, group.bytesPerRow, w, h)
         for child in children {
@@ -131,12 +142,11 @@ nonisolated final class LiveMaskRenderer {
     }
     private func coverage(_ id: UUID) -> CGImage? {
         if let image = cache[id] { return image }
-        guard !visiting.contains(id), visiting.count < 256, bounds.width > 0, bounds.height > 0,
-              bounds.width * bounds.height <= DocumentLimits.maxSurfaceExtent else { return nil }
+        guard !visiting.contains(id), visiting.count < 256, let (w, h) = pixelSize else { return nil }
         visiting.insert(id); defer { visiting.remove(id) }
-        let w = Int(bounds.width), h = Int(bounds.height)
         guard let pixels = try? BrushRaster.context(width: w, height: h, mask: false),
               let gray = try? BrushRaster.context(width: w, height: h, mask: true) else { return nil }
+        pixels.scaleBy(x: resolution, y: resolution)
         pixels.translateBy(x: -bounds.minX, y: -bounds.minY)
         draw(id, in: pixels)
         let rgba = pixels.data!.assumingMemoryBound(to: UInt8.self)
