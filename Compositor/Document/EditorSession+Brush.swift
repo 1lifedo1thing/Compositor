@@ -52,20 +52,13 @@ extension EditorSession {
         if tool == .blur, blurMode != .blur { beginWarp(at: point); return }
         guard tool == .brush || tool == .blur || (tool.isBrushTool && !isMaskSelected) else { return }
         guard canPaint, let layer = activeLayer, let document else { brushError = paintRefusal; return }
-        var clone: (image: CGImage, offset: CGSize)?
+        var sourceOffset: CGSize?
         if tool == .cloneStamp {
             guard let offset = cloneStrokeOffset(at: point) else {
                 brushError = "Option-click where Clone Stamp should copy from first."
                 return
             }
-            guard let image = cloneSample(document) else { return }
-            cloneOffset = offset
-            clone = (image, offset)
-        }
-        // Blur paints a softened copy of the layer, in place, through the brush tip.
-        if tool == .blur {
-            guard let image = blurSample(document, mask: isMaskSelected) else { return }
-            clone = (image, .zero)
+            sourceOffset = offset
         }
         finishOpacityEdit()
         do {
@@ -75,7 +68,16 @@ extension EditorSession {
             settings.healingMode = spotHealingMode
             if isMaskSelected { settings.red = maskPaintWhite ? 1 : 0; settings.green = settings.red; settings.blue = settings.red }
             let stroke = try makeRasterEdit(for: layer, settings: settings, growsMask: tool == .brush)
-            stroke.clone = clone
+            if let offset = sourceOffset {
+                guard let sample = cloneSample(document, for: stroke, offset: offset) else { return }
+                cloneOffset = offset
+                stroke.clone = sample
+            }
+            // Blur paints a softened copy of the layer, in place, through the brush tip.
+            if tool == .blur {
+                guard let sample = blurSample(for: stroke) else { return }
+                stroke.clone = sample
+            }
             stroke.isBlur = tool == .blur
             brushStroke = stroke
             try stroke.append(point)

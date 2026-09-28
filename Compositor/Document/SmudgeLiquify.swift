@@ -222,7 +222,7 @@ extension EditorSession {
             settings.hardness = 1
             settings.opacity = 1
             let stroke = try makeRasterEdit(for: current, settings: settings)
-            stroke.clone = (result, .zero)
+            stroke.clone = (result, CGRect(x: 0, y: 0, width: result.width, height: result.height), false)
             stroke.replacesWithClone = true
             stroke.editName = warp.mode.rawValue
             for point in warp.points { try stroke.append(point) }

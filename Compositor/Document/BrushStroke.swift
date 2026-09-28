@@ -143,8 +143,11 @@ final class BrushStroke {
     var pixelLimit = DocumentLimits.documentPixelBudget
     /// Limits every edit to the document selection; nil when nothing is selected.
     var selectionClip: SelectionClip?
-    /// Clone Stamp: a document-size image to copy from, and the offset from each painted point to its source.
-    var clone: (image: CGImage, offset: CGSize)?
+    /// Clone Stamp, Blur, Smudge and Liquify: an image painted through the tip, and where it sits, already shifted
+    /// by any source offset. Either in document pixels (a composite of the canvas, at document size) or, `inGrid`,
+    /// in the stroke's own pixel grid: the layer's own pixels at their own resolution, so a layer scaled down and
+    /// painted keeps its detail when it's scaled back up.
+    var clone: (image: CGImage, placed: CGRect, inGrid: Bool)?
     /// A Blur stroke: `clone` holds the layer blurred, painted in place through the tip.
     var isBlur = false
     /// The clone sample replaces what's under the tip rather than drawing over it, so it can also clear pixels.
@@ -226,8 +229,11 @@ final class BrushStroke {
         let gridDiameter = settings.diameter / scaleX
         gridTip = gpu == nil && square && gridDiameter >= 1 && gridDiameter <= Self.gridTipLimit
             ? try Self.tip(diameter: gridDiameter, hardness: settings.hardness, falloff: falloff) : nil
-        stamp = gpu == nil && gridTip == nil && settings.diameter <= Self.stampLimit
-            ? try Self.tip(diameter: settings.diameter, hardness: settings.hardness, falloff: falloff) : nil
+        // Drawn through the tile transform, the stamp is rendered as finely as the layer's pixels: magnified onto
+        // the finer grid of a scaled-down layer, it left blocky dabs that showed once the layer was scaled back up.
+        let stampDiameter = settings.diameter / min(1, scaleX, scaleY)
+        stamp = gpu == nil && gridTip == nil && stampDiameter <= Self.stampLimit
+            ? try Self.tip(diameter: stampDiameter, hardness: settings.hardness, falloff: falloff) : nil
     }
 
     /// The tip as grayscale coverage: white at full strength, fading to black at the rim.
@@ -499,11 +505,10 @@ final class BrushStroke {
                     context.setAlpha(settings.opacity)
                     if replacesWithClone { context.setBlendMode(.copy) }
                     context.interpolationQuality = .medium
-                    // Into document coordinates, where the sample lives.
+                    // Into the space the sample lives in: the stroke's grid, or document coordinates.
                     context.translateBy(x: -tile.rect.minX, y: -tile.rect.minY)
-                    context.concatenate(pixelToDocument.inverted())
-                    let placed = CGRect(x: -clone.offset.width, y: -clone.offset.height,
-                                        width: CGFloat(clone.image.width), height: CGFloat(clone.image.height))
+                    if !clone.inGrid { context.concatenate(pixelToDocument.inverted()) }
+                    let placed = clone.placed
                     context.translateBy(x: placed.minX, y: placed.maxY)
                     context.scaleBy(x: 1, y: -1)
                     context.draw(clone.image, in: CGRect(origin: .zero, size: placed.size))
@@ -811,6 +816,12 @@ final class BrushStroke {
     let maskBackground: CGFloat
     var committedBounds: CGRect { (allocatedBounds ?? sourceRect).integral }
     var committedTransform: LayerTransform { transform(for: committedBounds) }
+    /// Where `rect` of the stroke's grid sits to be copied from `offset` document pixels away: the offset carried
+    /// into the grid, turned, scaled and flipped as the layer is.
+    func gridRect(_ rect: CGRect, copyingFrom offset: CGSize) -> CGRect {
+        let shift = offset.applying(pixelToDocument.inverted())
+        return rect.offsetBy(dx: -shift.width, dy: -shift.height)
+    }
     func transform(for bounds: CGRect) -> LayerTransform {
         let center = CGPoint(x: bounds.midX, y: bounds.midY).applying(pixelToDocument)
         var result = paintTransform
