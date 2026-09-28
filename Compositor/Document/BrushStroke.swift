@@ -40,6 +40,34 @@ nonisolated enum BrushRaster {
         result.scaleBy(x: 1, y: -1)
         return result
     }
+    /// A color context holding `image`'s pixels. An image already in this layout (one made from such a context)
+    /// is copied byte for byte, several times quicker than drawing it.
+    static func copy(_ image: CGImage) throws -> CGContext {
+        let context = try Self.context(width: image.width, height: image.height, mask: false)
+        guard image.bitsPerPixel == 32, image.bitsPerComponent == 8, image.bitmapInfo == context.bitmapInfo,
+              image.colorSpace == context.colorSpace, let source = image.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(source), let target = context.data,
+              CFDataGetLength(source) >= image.bytesPerRow * (image.height - 1) + image.width * 4 else {
+            draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height), mask: false, context: context)
+            return context
+        }
+        let row = image.width * 4
+        for y in 0..<image.height {
+            memcpy(target + y * context.bytesPerRow, bytes + y * image.bytesPerRow, row)
+        }
+        return context
+    }
+
+    /// Runs `body` over `count` pixels in a few bands at once, each a (start, length) of whole pixels.
+    static func inBands(count: Int, _ body: (Int, Int) -> Void) {
+        let bands = count < 250_000 ? 1 : ProcessInfo.processInfo.activeProcessorCount * 2
+        let size = (count + bands - 1) / bands
+        DispatchQueue.concurrentPerform(iterations: bands) { band in
+            let start = band * size
+            if start < count { body(start, min(size, count - start)) }
+        }
+    }
+
     static func draw(_ image: CGImage, in rect: CGRect, mask: Bool, context: CGContext) {
         context.saveGState()
         context.interpolationQuality = .none
