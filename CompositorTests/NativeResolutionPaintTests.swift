@@ -215,4 +215,17 @@ struct NativeResolutionPaintTests {
         let untouched = (100..<104).map { values[100 * 1000 + $0] }
         #expect(untouched.contains { $0 < 30 } && untouched.contains { $0 > 225 })
     }
+
+    /// The Layers panel gives a scaled layer's size on the canvas and its scale, so a photo shrunk to 5% doesn't
+    /// read as if it had been resampled to 100 pixels.
+    @Test func layersPanelSaysHowFarALayerIsScaled() throws {
+        let session = try session(scaledTo: 0.05)
+        let layer = try #require(session.activeLayer)
+        #expect(layer.sizeLabel == "50 × 50 px · 5%")
+        var full = layer
+        full.transform.size = CGSize(width: 1000, height: 1000)
+        #expect(full.sizeLabel == "1000 × 1000 px")
+        full.transform.size = CGSize(width: 25, height: 25)
+        #expect(full.sizeLabel == "25 × 25 px · 2.5%")
+    }
 }

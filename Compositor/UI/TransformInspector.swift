@@ -42,10 +42,18 @@ struct TransformInspector: View {
             }.disabled((!session.canTransform && session.transformEdit == nil) || session.transformEdit?.corners != nil)
                 .padding(.horizontal, 18)
           }.scrollIndicators(.hidden)
-          Button("Cancel") { session.cancelTransform() }.configuredNativeShortcut(.escape)
-              .disabled(session.transformEdit == nil)
-          Button("Apply") { session.commitTransform() }.configuredNativeShortcut(.return)
-              .disabled(session.transformEdit == nil).accessibilityIdentifier("applyTransform")
+          // Only an edit that waits for them — typed values, ⌘T, a distortion — has anything to cancel or apply. A
+          // handle drag applies itself on release, and ghosted buttons after it read as the pixels being resampled,
+          // which they never are. Left in place unseen, so Escape and Return still reach a drag in progress.
+          let pending = session.transformEdit?.persistent == true
+          HStack(spacing: 12) {
+              Button("Cancel") { session.cancelTransform() }.configuredNativeShortcut(.escape)
+                  .disabled(session.transformEdit == nil)
+              Button("Apply") { session.commitTransform() }.configuredNativeShortcut(.return)
+                  .disabled(session.transformEdit == nil).accessibilityIdentifier("applyTransform")
+          }
+          .opacity(pending ? 1 : 0).allowsHitTesting(pending).accessibilityHidden(!pending)
+          .animation(.easeOut(duration: 0.12), value: pending)
         }.padding(.trailing, 18).toolHeaderBar().releasesFocusOnCommit(session)
     }
 
