@@ -1838,7 +1838,13 @@ final class CanvasView: NSView {
         }
         if let start = pixelDragStart, let document = session.document {
             let pixel = session.viewport.documentPoint(from: point, documentSize: document.size)
-            session.movePixels(by: CGSize(width: pixel.x - start.x, height: pixel.y - start.y))
+            var offset = CGSize(width: pixel.x - start.x, height: pixel.y - start.y)
+            // Shift keeps the pixels on a straight line, across or down — whichever the drag has gone further along —
+            // as it does moving a layer.
+            if event.modifierFlags.contains(.shift) {
+                if abs(offset.width) >= abs(offset.height) { offset.height = 0 } else { offset.width = 0 }
+            }
+            session.movePixels(by: offset)
             pixelDragCursor(duplicate: session.pixelMove?.duplicate == true).set()
             synchronizeDisplay()
             return
