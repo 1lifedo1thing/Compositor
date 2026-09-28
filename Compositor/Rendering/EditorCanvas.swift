@@ -1145,7 +1145,8 @@ final class CanvasView: NSView {
         let live = LiveMaskRenderer(bounds: context.boundingBoxOfClipPath, source: { byID[$0]?.maskSourceID }, drawOwn: drawOwnWithDraft)
         live.adjustment = { byID[$0]?.adjustment }
         live.adjustmentOpacity = { byID[$0]?.effectiveOpacity(in: byID) ?? 1 }
-        live.adjustmentScale = scale
+        // Adjustments run on the surface's pixels, one per screen pixel (see AdjustmentSurface).
+        live.adjustmentScale = scale * LayerRenderer.deviceScale(of: context)
         let area = context.boundingBoxOfClipPath
         live.adjustmentClip = { [weak self] id, ctx in
             guard let self, let layer = byID[id], layer.mask?.isEnabled == true else { return }
