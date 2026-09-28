@@ -516,7 +516,7 @@ final class EditorSession {
     func displayedTransform(for layer: ImageLayer) -> LayerTransform {
         if let pending = pendingTransform(for: layer) { return pending }
         // Content-Aware Fill past the layer's edge previews on the grown layer.
-        if let edit = filterEdit, let grown = edit.grownTransform, edit.previewImage(for: layer.id) != nil { return grown }
+        if let edit = filterEdit, let grown = edit.preparedTransform, edit.previewImage(for: layer.id) != nil { return grown }
         return layer.transform
     }
     /// Whether transforming places only the active layer's mask (an unlinked mask selected in the Layers panel).

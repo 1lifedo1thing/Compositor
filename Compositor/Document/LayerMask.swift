@@ -324,7 +324,7 @@ extension EditorSession {
     func displayedMaskPlacement(for layer: ImageLayer) -> LayerTransform? {
         guard let mask = layer.mask else { return nil }
         // Content-Aware Fill previewing on a grown layer: the mask keeps covering the layer's old bounds.
-        if let edit = filterEdit, edit.grownTransform != nil, edit.previewImage(for: layer.id) != nil { return mask.placement ?? layer.transform }
+        if let edit = filterEdit, edit.preparedTransform != nil, edit.previewImage(for: layer.id) != nil { return mask.placement ?? layer.transform }
         if let edit = transformEdit, let group = edit.group {
             guard let original = group.originals[layer.id] else { return mask.placement }
             if edit.corners != nil { return mask.isLinked && mask.placement == nil ? nil : mask.placement ?? layer.transform }
