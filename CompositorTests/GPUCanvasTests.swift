@@ -525,4 +525,30 @@ import Testing
         let merged = try red(try #require(try session.renderMergedPixels()).image)
         #expect(abs(exported - 170) <= 2 && abs(merged - 170) <= 2, "export \(exported), Copy Merged \(merged)")
     }
+
+    /// A soft-edged painted layer, smaller than the canvas, in a blend mode: its partly transparent pixels blend the same
+    /// on the GPU canvas as on the Core Graphics canvas and in Copy Merged.
+    @Test(arguments: [LayerBlendMode.softLight, .overlay, .multiply, .colorDodge])
+    func softEdgedLayersBlendTheSame(mode: LayerBlendMode) async throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = EditorSession()
+        session.viewport.resize(to: CGSize(width: 500, height: 400), backingScale: 2, documentSize: nil)
+        session.createDocument(width: 600, height: 500)
+        let photo = try pattern(600, 500, seed: 4)
+        session.insert(ImportedImage(image: photo, thumbnail: photo, name: "Photo"))
+        // Red, soft-edged: fully opaque in the middle, fading to nothing.
+        let soft = try BrushRaster.context(width: 280, height: 180, mask: false)
+        let colors = [CGColor(srgbRed: 1, green: 0.05, blue: 0, alpha: 1), CGColor(srgbRed: 1, green: 0.05, blue: 0, alpha: 0)]
+        let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: colors as CFArray, locations: [0.3, 1])!
+        soft.drawRadialGradient(gradient, startCenter: CGPoint(x: 140, y: 90), startRadius: 0, endCenter: CGPoint(x: 140, y: 90), endRadius: 110, options: [])
+        let paint = try #require(soft.makeImage())
+        session.insert(ImportedImage(image: paint, thumbnail: paint, name: "Paint"))
+        let index = session.document!.layers.count - 1
+        session.document!.layers[index].transform.origin = CGPoint(x: 160, y: 140)
+        session.document!.layers[index].blendMode = mode
+        session.selectLayer(nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "soft-\(mode.rawValue)")
+        #expect(difference.mean < 1.5 && difference.over < 0.005, "\(mode.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
 }
