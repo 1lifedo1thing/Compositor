@@ -471,6 +471,13 @@ final class LayerTableView: NSTableView {
     private var clippingMonitor: Any?
     private var clippingCursorActive = false
 
+    /// Cmd-A selects the whole canvas, as Select > All does, even with the Layers panel just clicked — never every layer.
+    /// A layer's name being edited keeps its own Select All: its field editor answers first.
+    override func selectAll(_ sender: Any?) {
+        guard let session = session ?? (delegate as? NativeLayerList.Coordinator)?.session, session.document != nil else { return }
+        session.selectAll()
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let row = row(at: point)
