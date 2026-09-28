@@ -81,9 +81,18 @@ import Testing
 
     /// Both canvases drawn for `session`; the share of pixels more than 12 levels apart, and the mean difference.
     private func compare(_ session: EditorSession, name: String, width points: Int = 500, height pointsHigh: Int = 400,
-                         backingScale: Int = 2) throws -> Difference {
+                         backingScale: Int = 2, inWindow: Bool = false) throws -> Difference {
         let canvas = CanvasView(session: session)
         canvas.frame = CGRect(x: 0, y: 0, width: points, height: pointsHigh)
+        // Text being typed draws only with its editor, which lives in a window.
+        var window: NSWindow?
+        if inWindow {
+            window = NSWindow(contentRect: canvas.frame, styleMask: [.titled], backing: .buffered, defer: false)
+            window?.contentView = canvas
+            session.viewport.resize(to: canvas.bounds.size, backingScale: CGFloat(backingScale), documentSize: session.document?.size)
+            canvas.synchronizeDisplay()
+        }
+        defer { _ = window }
         let width = points * backingScale, height = pointsHigh * backingScale
         let cpu = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -301,5 +310,149 @@ import Testing
         let difference = try compare(session, name: "pattern-\(kind.rawValue)")
         // Shrinking, the two sample the pattern's hard edges a little differently (see matchesCoreGraphicsCanvas).
         #expect(difference.mean < 1.5 && difference.over < 0.03, "\(kind.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// Adjustments in a blend mode, over the canvas and inside a clipping stack.
+    @Test(arguments: [LayerBlendMode.multiply, .color, .overlay, .linearDodge])
+    func matchesAdjustmentsInABlendMode(mode: LayerBlendMode) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        let base = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        var curves = ImageLayer(name: "Curves", blankSize: CGSize(width: 600, height: 500))
+        curves.adjustment = LayerAdjustment(kind: .curves)
+        curves.adjustment!.curves.channels[0] = [CurvePoint(x: 0, y: 40), CurvePoint(x: 128, y: 200), CurvePoint(x: 255, y: 230)]
+        curves.blendMode = mode
+        curves.opacity = 0.85
+        session.document!.layers.append(curves)
+        // The same, clipped to the photo.
+        var clipped = ImageLayer(name: "Hue", blankSize: CGSize(width: 600, height: 500))
+        clipped.adjustment = LayerAdjustment(kind: .hsv, hsvSettings: HueSaturationSettings(hue: 60, saturation: 30))
+        clipped.blendMode = mode
+        clipped.maskSourceID = session.document!.layers[base].id
+        session.document!.layers.insert(clipped, at: base + 1)
+        session.selectLayer(nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "adjustment-mode-\(mode.rawValue)")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "\(mode.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// A layer masked by the coverage of a layer that isn't directly under it.
+    @Test func matchesALiveMaskOutsideAClippingStack() throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        let shape = try pattern(260, 220, seed: 6, alpha: true)
+        session.insert(ImportedImage(image: shape, thumbnail: shape, name: "Shape"))
+        let source = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        session.document!.layers[source].transform.rotation = 15
+        let between = try pattern(200, 200, seed: 7)
+        session.insert(ImportedImage(image: between, thumbnail: between, name: "Between"))
+        let top = try pattern(500, 400, seed: 8)
+        session.insert(ImportedImage(image: top, thumbnail: top, name: "Masked"))
+        let masked = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        session.document!.layers[masked].maskSourceID = session.document!.layers[source].id
+        session.selectLayer(nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "live-mask")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// A distortion being dragged, on a masked layer: in perspective (convex), and folded over (warped on the CPU).
+    @Test(arguments: [false, true])
+    func matchesWhileDistorting(folded: Bool) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable(masked: true)
+        session.selectTool(.move)
+        session.beginTransform(persistent: false)
+        session.beginDistort()
+        let shape = [CGPoint(x: 120, y: 60), CGPoint(x: 470, y: 110), CGPoint(x: 430, y: 420), CGPoint(x: 70, y: 380)]
+        session.previewCorners(folded ? [shape[0], shape[2], shape[1], shape[3]] : shape)
+        #expect(session.transformEdit?.corners != nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "distort-\(folded)")
+        // A warp resamples every pixel, and the CPU canvas warps at most 2048 pixels across: edges land a little
+        // differently, so this allows more of them than the placements above.
+        #expect(difference.mean < 2 && difference.over < 0.05, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// New text being typed, and text being edited with a stroke and shadow redone around it as it's typed.
+    @Test(arguments: [false, true])
+    func matchesWhileTyping(existing: Bool) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        if existing {
+            session.beginText(at: CGPoint(x: 150, y: 200), newLayer: true)
+            session.textDraft?.style.content = "Before"
+            session.textDraft?.style.fontSize = 64
+            #expect(session.finishText())
+            let index = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+            session.document!.layers[index].effects = LayerEffects(stroke: StrokeEffect(size: 3, red: 1, green: 1, blue: 1),
+                                                                  shadow: ShadowEffect(distance: 8, blur: 6))
+            session.beginText(at: CGPoint(x: 170, y: 180))
+            #expect(session.textDraft?.layerID != nil)
+        } else {
+            session.beginText(at: CGPoint(x: 150, y: 200), newLayer: true)
+        }
+        session.textDraft?.style.content = "Typing"
+        session.textDraft?.style.fontSize = 64
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "typing-\(existing)", inWindow: true)
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    /// A shape being dragged out, which draws above the active layer.
+    @Test func matchesWhileDrawingAShape() throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let session = try paintable()
+        session.selectTool(.shape)
+        session.beginShape(at: CGPoint(x: 120, y: 90))
+        session.dragShape(to: CGPoint(x: 380, y: 300), square: false, fromCenter: false)
+        #expect(session.shapeDraft != nil)
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "shape")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "mean \(difference.mean), over 12 levels \(difference.over * 100)%")
+    }
+
+    enum EffectsCase: String, CaseIterable {
+        case paintingWithEffects, gradientWithEffects, gradientOnAMask, movingOnAMaskedLayer, movingWithEffects, paintingAPlacedMask
+    }
+
+    /// Editing layers the Core Graphics canvas used to draw for: effects redone as they're edited, masks placed apart.
+    @Test(arguments: EffectsCase.allCases)
+    func matchesWhileEditingLayersWithEffectsAndMasks(edit: EffectsCase) throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let masked = edit == .gradientOnAMask || edit == .movingOnAMaskedLayer || edit == .paintingAPlacedMask
+        let session = try paintable(masked: masked)
+        let index = session.document!.layers.firstIndex { $0.id == session.activeLayerID }!
+        if [.paintingWithEffects, .gradientWithEffects, .movingWithEffects].contains(edit) {
+            session.document!.layers[index].effects = LayerEffects(stroke: StrokeEffect(size: 5, red: 1, green: 1, blue: 1),
+                                                                  shadow: ShadowEffect(distance: 12, blur: 8))
+        }
+        if edit == .paintingAPlacedMask {
+            var placed = session.document!.layers[index].transform
+            placed.origin.x += 60
+            placed.rotation = 10
+            session.document!.layers[index].mask?.placement = placed
+            session.document!.layers[index].mask?.isLinked = false
+        }
+        switch edit {
+        case .paintingWithEffects, .paintingAPlacedMask:
+            session.tool = .brush
+            session.isMaskSelected = edit == .paintingAPlacedMask
+            stroke(session)
+            #expect(session.brushStroke != nil)
+        case .gradientWithEffects, .gradientOnAMask:
+            session.tool = .gradient
+            session.isMaskSelected = edit == .gradientOnAMask
+            session.beginGradient(at: CGPoint(x: 150, y: 120))
+            session.moveGradient(end: CGPoint(x: 420, y: 330))
+            #expect(session.gradientEdit?.hasLine == true)
+        case .movingOnAMaskedLayer, .movingWithEffects:
+            session.applySelection(CGPath(ellipseIn: CGRect(x: 140, y: 120, width: 200, height: 150), transform: nil), mode: .replace, name: "Select")
+            #expect(session.beginPixelMove())
+            session.movePixels(by: CGSize(width: 70, height: 50))
+        }
+        session.zoom(to: 1)
+        let difference = try compare(session, name: "editing-\(edit.rawValue)")
+        #expect(difference.mean < 1.5 && difference.over < 0.01, "\(edit.rawValue): mean \(difference.mean), over 12 levels \(difference.over * 100)%")
     }
 }

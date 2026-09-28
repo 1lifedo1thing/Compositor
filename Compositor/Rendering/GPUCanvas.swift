@@ -320,6 +320,32 @@ final class MetalCanvasView: NSView {
         return GPUBlend.masked(placed, by: outline)
     }
 
+    /// `image`, shown through `transform`, taken in perspective so its corners land on `corners` (document points, handle
+    /// order) — `DistortWarp.warp` for a convex shape, done here at full size rather than on the CPU for every move.
+    func warp(_ image: CGImage, transform: LayerTransform, corners: [CGPoint], mask: Bool = false) -> CIImage? {
+        guard DistortWarp.isConvex(corners) else { return nil }
+        let target = DistortWarp.imageCorners(corners.map { $0.applying(mapping) }, flipX: transform.flipX, flipY: transform.flipY)
+        let xs = [target.topLeft.x, target.topRight.x, target.bottomRight.x, target.bottomLeft.x]
+        let ys = [target.topLeft.y, target.topRight.y, target.bottomRight.y, target.bottomLeft.y]
+        let span = max(xs.max()! - xs.min()!, ys.max()! - ys.min()!)
+        let level = transform.sampling == .nearest ? 0 : DownsampleCache.level(for: span / CGFloat(max(image.width, image.height)))
+        guard let source = renderer.image(image, level: level, mask: mask) else { return nil }
+        // Core Image's top edge is the image's last row here, where y counts down the rows.
+        func taken(_ image: CIImage, extent: CGRect) -> CIImage {
+            image.applyingFilter("CIPerspectiveTransformWithExtent", parameters: [
+                "inputExtent": CIVector(cgRect: extent),
+                "inputTopLeft": CIVector(cgPoint: target.bottomLeft), "inputTopRight": CIVector(cgPoint: target.bottomRight),
+                "inputBottomRight": CIVector(cgPoint: target.topRight), "inputBottomLeft": CIVector(cgPoint: target.topLeft)])
+        }
+        let size = CGSize(width: max(1, (image.width + (1 << level) - 1) >> level), height: max(1, (image.height + (1 << level) - 1) >> level))
+        let sampled = transform.sampling == .nearest ? source.samplingNearest() : source
+        // Carried past its edges and cut to the shape, drawn at screen size (see `place`).
+        let outlineSide = max(span, 1)
+        let outline = taken(CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: outlineSide, height: outlineSide)),
+                            extent: CGRect(x: 0, y: 0, width: outlineSide, height: outlineSide))
+        return GPUBlend.masked(taken(sampled.clampedToExtent(), extent: CGRect(origin: .zero, size: size)), by: outline)
+    }
+
     func place(_ image: CGImage, transform: LayerTransform, mask: Bool = false) -> CIImage? {
         place(width: image.width, height: image.height, transform: transform, mask: mask) {
             renderer.image(image, level: $0, mask: mask)
@@ -393,9 +419,6 @@ nonisolated enum GPUBlend {
 }
 
 nonisolated enum GPUAdjustment {
-    /// The adjustments the GPU canvas runs itself: all of them.
-    static func supports(_ adjustment: LayerAdjustment) -> Bool { true }
-
     /// `image` adjusted, laid out in frame pixels: `scale` frame pixels per document pixel, and `mapping` from document
     /// pixels to the frame (for Grain, whose pattern belongs to the document).
     static func apply(_ adjustment: LayerAdjustment, to image: CIImage, scale: CGFloat, mapping: CGAffineTransform) -> CIImage? {
