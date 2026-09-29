@@ -925,7 +925,7 @@ private final class LayerCell: NSTableCellView, NSTextFieldDelegate {
         // A reused cell must not carry another row's half-finished rename.
         if renaming, layerID != layer.id { restoreLabel() }
         if !renaming { nameLabel.stringValue = (layer.maskSourceID == nil ? "" : "↳ ") + layer.name }
-        dimensions.stringValue = layer.liveText != nil ? "Text · Double-click to edit" : layer.adjustment != nil ? "Adjustment · Double-click to edit" : layer.isGroup ? "Folder" : "\(Int(layer.size.width.rounded())) × \(Int(layer.size.height.rounded())) px"
+        dimensions.stringValue = layer.liveText != nil ? "Text · Double-click to edit" : layer.adjustment != nil ? "Adjustment · Double-click to edit" : layer.isGroup ? "Folder" : layer.sizeLabel
         if let source = layer.maskSourceID {
             let sourceName = session.document?.layers.first(where: { $0.id == source })?.name ?? "Missing source"
             dimensions.stringValue = "Clipped to \(sourceName)"
@@ -1322,4 +1322,17 @@ private struct ThumbnailKey: Equatable {
     let transform: LayerTransform
     let canvas: CGSize
     var editableText = false
+}
+
+extension ImageLayer {
+    /// The layer's size on the canvas and, once it's scaled, by how much, for its row. A photo shrunk to 5% keeps
+    /// every one of its pixels; the percentage says so, where the size alone reads as if it had been resampled small.
+    var sizeLabel: String {
+        let text = "\(Int(size.width.rounded())) × \(Int(size.height.rounded())) px"
+        guard let pixels = asset?.image.width, pixels > 0 else { return text }
+        // Measured across the width, as the Transform bar's Scale field is.
+        let percent = Double(size.width) / Double(pixels) * 100
+        guard abs(percent - 100) >= 0.05 else { return text }
+        return text + " · " + percent.formatted(.number.precision(.fractionLength(0...1))) + "%"
+    }
 }

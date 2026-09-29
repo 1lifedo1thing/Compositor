@@ -60,7 +60,7 @@ extension EditorSession {
             refreshGradient()
             return
         }
-        guard canPaint else { return }
+        guard canPaint else { brushError = paintRefusal; return }
         finishOpacityEdit()
         do {
             gradientEdit = GradientEdit(raster: try makeRasterEdit(for: layer, growsMask: true), start: point)
