@@ -551,6 +551,29 @@ final class LayerTableView: NSTableView {
     }
     private static let createClippingCursor = clippingCursor(releasing: false)
     private static let releaseClippingCursor = clippingCursor(releasing: true)
+    /// Option over a mask thumbnail: the duplicate pointer with a small eye at its lower right — an Option-click shows
+    /// the mask alone on the canvas, and an Option-drag still copies it onto another layer.
+    private static let showMaskCursor: NSCursor = {
+        let base = CanvasView.duplicateCursor
+        let eye = NSRect(x: base.hotSpot.x + 15, y: base.hotSpot.y + 18, width: 7.5, height: 5.5)
+        let size = NSSize(width: max(base.image.size.width, eye.maxX + 2), height: max(base.image.size.height, eye.maxY + 2))
+        let image = NSImage(size: size, flipped: true) { _ in
+            // The eye first, so the arrows sit in front of it.
+            let symbol = NSImage(systemSymbolName: "eye.fill", accessibilityDescription: nil)!
+            let white = symbol.withSymbolConfiguration(.init(paletteColors: [.white]))!
+            let black = symbol.withSymbolConfiguration(.init(paletteColors: [.black]))!
+            for step in 0..<16 {
+                let angle = CGFloat(step) * .pi / 8
+                white.draw(in: eye.offsetBy(dx: cos(angle), dy: sin(angle)))
+            }
+            black.draw(in: eye)
+            base.image.draw(in: NSRect(origin: .zero, size: base.image.size), from: .zero, operation: .sourceOver,
+                            fraction: 1, respectFlipped: true, hints: nil)
+            return true
+        }
+        image.accessibilityDescription = "Show mask alone"
+        return NSCursor(image: image, hotSpot: base.hotSpot)
+    }()
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let clippingTracking { removeTrackingArea(clippingTracking) }
@@ -572,7 +595,7 @@ final class LayerTableView: NSTableView {
         }
     }
     /// Keeps the cursor right over the layer list: with Option held, the clipping cursor over the bottom quarter
-    /// of a row, as in Photoshop, and the duplicate cursor over the rest of it (a mask thumbnail copies the mask); a thumbnail's own cursor with Command held over
+    /// of a row, as in Photoshop, and the duplicate cursor over the rest of it (a mask thumbnail shows the mask alone); a thumbnail's own cursor with Command held over
     /// it; otherwise the arrow — even when a
     /// tool's cursor followed the mouse in. `location` is in window coordinates; without one
     /// (a modifier change) the current mouse position is used.
@@ -591,13 +614,14 @@ final class LayerTableView: NSTableView {
     }
 
     /// With Option held, the cursor for whatever is under `point`: the clipping cursor over the bottom of a row,
-    /// the duplicate cursor over the rest of it and over a mask thumbnail an Option-drag can copy.
+    /// the duplicate cursor over the rest of it, and over a mask thumbnail the one for showing the mask alone.
     private func clippingCursor(at point: NSPoint) -> NSCursor? {
         let index = row(at: point)
         guard let session, session.layerRows.indices.contains(index) else { return nil }
         let layer = session.layerRows[index].layer
+        // Option-click on a mask shows it alone (Option-dragging it onto another layer still copies it).
         if let thumbnail = thumbnail(at: point), thumbnail.isMaskTarget, !thumbnail.isHidden {
-            return session.canEditLayers ? CanvasView.duplicateCursor : NSCursor.arrow
+            return Self.showMaskCursor
         }
         guard isClippingZone(point, row: index) else {
             return session.canEditLayers ? CanvasView.duplicateCursor : NSCursor.arrow
