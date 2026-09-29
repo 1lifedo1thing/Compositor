@@ -22,7 +22,7 @@ import Testing
                                          count: context.bytesPerRow * context.height))
     }
 
-    @Test(arguments: [BlurToolMode.smudge, .liquify])
+    @Test(arguments: [BlurToolMode.smudge])
     func matchesTheCPU(mode: BlurToolMode) throws {
         guard GPUCanvasRenderer.shared != nil else { return }
         let image = try photo()
@@ -48,5 +48,31 @@ import Testing
         }
         // A level here and there: the GPU's square roots round a hair differently.
         #expect(Double(over) / Double(cpu.count) < 0.001 && largest <= 8, "\(mode.rawValue): largest \(largest), \(over) values over 2")
+    }
+
+    /// Liquify keeps pixels sharp: a stroke pushed across and back again leaves the layer much as it was. It moves where
+    /// each pixel is drawn from and samples the untouched layer once; resampled at every dab instead, as the CPU's are,
+    /// the pixels soften with each one.
+    @Test func liquifyStaysSharp() throws {
+        guard GPUCanvasRenderer.shared != nil else { return }
+        let image = try photo()
+        let layer = ImageLayer(asset: ImportedImage(image: image, thumbnail: image, name: "Photo"), origin: .zero)
+        var settings = BrushSettings()
+        settings.diameter = 60
+        settings.hardness = 0.3
+        settings.opacity = 0.7
+        func stroke(gpu: Bool) throws -> [UInt8] {
+            let stroke = try WarpStroke(layer: layer, image: image, transform: layer.transform, canvas: CGSize(width: 300, height: 200),
+                                        mode: .liquify, settings: settings, useGPU: gpu)
+            for x in stride(from: 60.0, through: 200, by: 4) { stroke.append(CGPoint(x: x, y: 100)) }
+            for x in stride(from: 200.0, through: 60, by: -4) { stroke.append(CGPoint(x: x, y: 100)) }
+            return try bytes(try #require(stroke.image))
+        }
+        let untouched = try bytes(image)
+        func change(_ result: [UInt8]) -> Double {
+            Double(zip(result, untouched).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }) / Double(untouched.count)
+        }
+        let gpu = change(try stroke(gpu: true)), cpu = change(try stroke(gpu: false))
+        #expect(gpu < cpu / 2, "the GPU's stroke leaves the layer nearer how it was: \(gpu) against \(cpu)")
     }
 }
