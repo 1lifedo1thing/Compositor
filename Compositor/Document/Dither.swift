@@ -145,7 +145,14 @@ nonisolated struct DitherSettings: Equatable, Sendable {
     /// The lines' light, blurred across a few line spacings and added back over them, as a CRT's phosphors bloom.
     private func glowing(_ image: CGImage) throws -> CGImage {
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-        let blurred = CIImage(cgImage: image).clampedToExtent().applyingGaussianBlur(sigma: lineSpacing * 3 + 3).cropped(to: extent)
+        // The glow is wide and soft, so it's blurred at a fraction of the size and scaled back up: the same light for a
+        // small part of the work.
+        let sigma = lineSpacing * 3 + 3, shrink = max(1, (sigma / 4).rounded(.down))
+        let blurred = CIImage(cgImage: image).clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: 1 / shrink, y: 1 / shrink))
+            .applyingGaussianBlur(sigma: sigma / shrink)
+            .transformed(by: CGAffineTransform(scaleX: shrink, y: shrink))
+            .cropped(to: extent)
         let bloom = try BrushRaster.copy(try PixelAdjust.render(blurred, width: image.width, height: image.height, isMask: false))
         let result = try BrushRaster.copy(image)
         guard let pixels = result.data, let light = bloom.data, bloom.bytesPerRow == result.bytesPerRow else { throw ExportError.render }
