@@ -203,10 +203,11 @@ import Metal
         float w = weight(sqrt(float(offset.x * offset.x + offset.y * offset.y)) * d.inverseRadius, d.hardness);
         if (w <= 0.0f) return;
         float4 under = canvas.read(uint2(p)) * 255.0f, held = carried.read(gid);
-        float4 painted = under + (held - under) * w;
+        // What was under the brush at the last dab, laid down here at the smudge's strength; the brush then carries
+        // what it just left, and nothing older (see WarpStroke.smudge).
+        float4 painted = under + (held - under) * w * d.keep;
         canvas.write(clamp(round(painted), 0.0f, 255.0f) / 255.0f, uint2(p));
-        // The brush picks up some of what it just left, more the weaker the smudge.
-        carried.write(painted + (held - painted) * d.keep, gid);
+        carried.write(painted, gid);
     }
 
     kernel void warp_copy(texture2d<float, access::read> from [[texture(0)]],
