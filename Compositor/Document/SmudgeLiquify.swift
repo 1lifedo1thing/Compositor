@@ -231,7 +231,15 @@ extension EditorSession {
             stroke.clone = (result, CGRect(x: 0, y: 0, width: result.width, height: result.height), false)
             stroke.replacesWithClone = true
             stroke.editName = warp.mode.rawValue
-            for point in warp.points { try stroke.append(point) }
+            // The tip is solid and a little wider than the brush, so a point every twentieth of its width covers what
+            // every dab did: a big brush on a big canvas lays thousands of dabs, and replaying each one stalled the release.
+            let spacing = max(1, warp.diameter * 0.05)
+            var kept: CGPoint?
+            for (index, point) in warp.points.enumerated() {
+                if let kept, index < warp.points.count - 1, hypot(point.x - kept.x, point.y - kept.y) < spacing { continue }
+                try stroke.append(point)
+                kept = point
+            }
             try stroke.flush()
             if !stroke.patches.isEmpty { try commitPaintSnapshot(stroke) }
         } catch { brushError = error.localizedDescription }
