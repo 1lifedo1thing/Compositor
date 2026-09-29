@@ -156,6 +156,14 @@ struct NativeLayerList: NSViewRepresentable {
             groupItem.isEnabled = validateMenuItem(groupItem)
             menu.addItem(groupItem)
 
+            // A folder right-clicked can be ungrouped: its layers stay where they are, and the folder goes.
+            if rows[row].isGroup {
+                let ungroupItem = NSMenuItem(title: "Ungroup Layers", action: #selector(ungroupLayersAction), keyEquivalent: "")
+                ungroupItem.target = self
+                ungroupItem.isEnabled = validateMenuItem(ungroupItem)
+                menu.addItem(ungroupItem)
+            }
+
             // 6. Move Out of Folder
             let moveOutItem = NSMenuItem(title: "Move Out of Folder", action: #selector(moveOutOfFolderAction), keyEquivalent: "")
             moveOutItem.target = self
@@ -229,6 +237,8 @@ struct NativeLayerList: NSViewRepresentable {
                 return session.activeLayerID.map { session.canToggleClippingMask($0) } ?? false
             case #selector(groupSelectedLayersAction):
                 return session.canEditLayers && session.document != nil && (session.document?.layers.count ?? 0) < 10_000 && !session.selectedLayerIDs.isEmpty
+            case #selector(ungroupLayersAction):
+                return session.canUngroupLayers
             case #selector(moveOutOfFolderAction):
                 return session.canEditLayers && session.activeLayer?.parentID != nil
             case #selector(mergeLayersAction):
@@ -270,6 +280,10 @@ struct NativeLayerList: NSViewRepresentable {
 
         @objc func groupSelectedLayersAction(_ sender: Any?) {
             session.groupSelectedLayers()
+        }
+
+        @objc func ungroupLayersAction(_ sender: Any?) {
+            session.ungroupLayers()
         }
 
         @objc func moveOutOfFolderAction(_ sender: Any?) {
