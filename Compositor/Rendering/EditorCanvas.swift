@@ -1968,17 +1968,23 @@ final class CanvasView: NSView {
                 session.previewCorners(corners)
                 needsDisplay = true
             } else {
+                let shift = event.modifierFlags.contains(.shift), option = event.modifierFlags.contains(.option)
+                let moving = session.transformEdit?.group.map { Set($0.originals.keys) }
+                    ?? Set([session.transformEdit?.layerID].compactMap { $0 })
+                let tolerance = TransformSnap.distance / max(session.viewport.pointsPerPixel, 0.0001)
+                // Moving and resizing snap to the canvas and the other layers — a resized layer's dragged edges — and
+                // rotating is left alone. Control drags freely.
+                var target = pixel
+                if case .resize = drag.mode, !event.modifierFlags.contains(.control) {
+                    target = session.snappedResizePoint(pixel, drag: drag, proportional: session.locksTransformRatio != shift,
+                                                        moving: moving, tolerance: tolerance) {
+                        drag.updated(to: $0, lockRatio: session.locksTransformRatio, shift: shift, option: option)
+                    }
+                }
                 // Dragging, scaling and rotating land on whole pixels and whole degrees; typed values stay exact.
-                var draft = drag.updated(to: pixel, lockRatio: session.locksTransformRatio,
-                                         shift: event.modifierFlags.contains(.shift),
-                                         option: event.modifierFlags.contains(.option)).rounded()
-                // Moving snaps to the canvas and the other layers; resizing and rotating are left alone, and
-                // Control drags freely.
+                var draft = drag.updated(to: target, lockRatio: session.locksTransformRatio, shift: shift, option: option).rounded()
                 if case .move = drag.mode, !event.modifierFlags.contains(.control) {
-                    let moving = session.transformEdit?.group.map { Set($0.originals.keys) }
-                        ?? Set([session.transformEdit?.layerID].compactMap { $0 })
-                    draft = session.snappedMove(draft, moving: moving,
-                                                tolerance: TransformSnap.distance / max(session.viewport.pointsPerPixel, 0.0001))
+                    draft = session.snappedMove(draft, moving: moving, tolerance: tolerance)
                 }
                 session.previewTransform(draft)
             }
