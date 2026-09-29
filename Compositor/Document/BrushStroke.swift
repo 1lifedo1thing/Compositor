@@ -17,6 +17,8 @@ nonisolated struct BrushSettings: Sendable {
     /// 0–100. The brush trails the pointer on a string of this length, so a shaky hand
     /// draws a smooth line; 0 follows the pointer exactly.
     var smoothing: CGFloat = 0
+    /// Blur: how far it softens, in canvas pixels, whatever the brush's size. Strength sets how much.
+    var blurRadius: CGFloat = 5
     /// Spot-healing uses nearby source pixels instead of the foreground color.
     /// Erase: the stroke clears the layer's pixels instead of painting color on them.
     var erasing = false
