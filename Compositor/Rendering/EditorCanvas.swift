@@ -2531,6 +2531,8 @@ final class CanvasView: NSView {
         guard var mode else { return }
         if case .move = mode { duplicatesTransformOnDrag = modifiers.contains(.option) }
         else { duplicatesTransformOnDrag = false }
+        // A value the Move bar's fields were still changing is applied first: this drag is an edit of its own.
+        if session.transformEdit?.fromFields == true { session.commitTransform() }
         if session.transformEdit == nil { session.beginTransform(persistent: false) }
         // Cmd-dragging a handle distorts, as in Photoshop; once distorted, handles keep distorting.
         if case .resize(let index) = mode, modifiers.contains(.command) || session.transformEdit?.corners != nil {

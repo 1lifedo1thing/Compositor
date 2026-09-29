@@ -21,13 +21,13 @@ struct TransformInspector: View {
             HStack(spacing: 12) {
                 field("X", value: value.origin.x) { $0.origin.x = $1 }.frame(width: 85)
                 field("Y", value: value.origin.y) { $0.origin.y = $1 }.frame(width: 85)
-                TransformValueField(label: "W", value: value.size.width, range: 1...30_000) { resize($0, width: true) }.frame(width: 85)
-                TransformValueField(label: "H", value: value.size.height, range: 1...30_000) { resize($0, width: false) }.frame(width: 85)
+                TransformValueField(label: "W", value: value.size.width, range: 1...30_000, finish: finish) { resize($0, width: true) }.frame(width: 85)
+                TransformValueField(label: "H", value: value.size.height, range: 1...30_000, finish: finish) { resize($0, width: false) }.frame(width: 85)
                 // Shift flips the lock while dragging a handle, and the button shows it flipped.
                 Toggle(isOn: Binding(get: { session.locksTransformRatio != held.contains(.shift) },
                                      set: { session.locksTransformRatio = $0 != held.contains(.shift) })) { Image(systemName: "link") }
                     .toggleStyle(.button).help("Lock aspect ratio. Hold Shift while dragging a handle to turn it the other way.")
-                TransformValueField(label: "Scale", suffix: "%", value: value.scalePercent(pixelSize: pixelSize), range: 0.1...30_000) { number in
+                TransformValueField(label: "Scale", suffix: "%", value: value.scalePercent(pixelSize: pixelSize), range: 0.1...30_000, finish: finish) { number in
                     change { value in
                         guard number > 0 else { return }
                         value = value.scaled(toPercent: number, pixelSize: pixelSize)
@@ -66,13 +66,25 @@ struct TransformInspector: View {
     private var pixelSize: CGSize { session.transformPixelSize ?? session.activeLayer?.size ?? value.size }
     private func field(_ label: String, value: CGFloat, range: ClosedRange<CGFloat> = -30_000...30_000,
                        set: @escaping (inout LayerTransform, CGFloat) -> Void) -> some View {
-        TransformValueField(label: label, value: value, range: range) { number in change { set(&$0, number) } }
+        TransformValueField(label: label, value: value, range: range, finish: finish) { number in change { set(&$0, number) } }
     }
+    /// A value typed, stepped or dragged shows on the canvas as it changes, and is applied without Cancel or Apply —
+    /// a transform never resamples the layer's pixels, so there is nothing to confirm — as one undo step once the
+    /// field is done with it (see `finish`), as a handle drag is when it's let go. An edit already waiting for Apply —
+    /// ⌘T, a distortion, selected pixels being transformed — takes it as part of that edit.
     private func change(_ update: (inout LayerTransform) -> Void) {
-        if session.transformEdit == nil { session.beginTransform() }
+        if session.transformEdit == nil {
+            session.beginTransform(persistent: false)
+            session.transformEdit?.fromFields = true
+        }
         guard var value = session.transformEdit?.draft else { return }
         update(&value)
         session.previewTransform(value)
+    }
+    /// A field done with its value — a drag on its label let go, or the field left (Return, Tab, a click elsewhere):
+    /// what the fields changed is applied, one undo step.
+    private func finish() {
+        if session.transformEdit?.fromFields == true { session.commitTransform() }
     }
     private func resize(_ number: CGFloat, width: Bool) {
         change { value in
@@ -93,6 +105,8 @@ private struct TransformValueField: View {
     var suffix: String? = nil
     let value: CGFloat
     let range: ClosedRange<CGFloat>
+    /// The field is done with its value: a drag on its label let go, or the field left.
+    let finish: () -> Void
     let change: (CGFloat) -> Void
     @State private var text = ""
     @State private var stepper = ArrowStepper()
@@ -103,13 +117,13 @@ private struct TransformValueField: View {
                 .scrubbable(sensitivity: 1, value: Binding(get: { value }, set: { newValue in
                     change(newValue)
                     text = Self.formatted(Double(newValue))
-                }), range: range, step: 1)
+                }), range: range, step: 1, onEnd: finish)
             TextField(label, text: $text)
                 .textFieldStyle(.roundedBorder).focused($focused)
                 .accessibilityIdentifier("transform\(label)")
                 .onAppear { sync() }
                 .onChange(of: value) { if !focused { sync() } }
-                .onChange(of: focused) { if !focused { sync() } }
+                .onChange(of: focused) { if !focused { finish(); sync() } }
                 .onChange(of: text) {
                     if focused, let number = Double(text), number.isFinite { change(CGFloat(number)) }
                 }
