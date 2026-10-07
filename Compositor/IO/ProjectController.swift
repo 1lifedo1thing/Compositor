@@ -333,7 +333,8 @@ final class ProjectController {
         alert.informativeText = "Your changes will be lost if you don’t save them."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Don’t Save")
+        let dontSaveButton = alert.addButton(withTitle: "Don’t Save")
+        dontSaveButton.hasDestructiveAction = true
         let response = await show(alert)
         if response == .alertFirstButtonReturn { return await saveCurrent() }
         return response == .alertThirdButtonReturn
