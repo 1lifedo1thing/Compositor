@@ -61,14 +61,14 @@ struct NewCanvasSheet: View {
     var onOpen: (() -> Void)? = nil
     @State private var width = "1920"
     @State private var height = "1080"
-    /// Remembered between canvases: someone working for print at 300 DPI in inches shouldn't set it every time.
-    @AppStorage("newCanvasUnit") private var unit = NewCanvasUnit.pixels
-    @AppStorage("newCanvasResolution") private var resolution = 72.0
-    @AppStorage("newCanvasBackground") private var background = NewCanvasBackground.transparent
+    /// Always starting from the common case: remembered print settings turned the default 1920 × 1080 into inches,
+    /// a canvas far too big to make.
+    @State private var unit = NewCanvasUnit.pixels
+    @State private var resolution = 72.0
+    @State private var background = NewCanvasBackground.transparent
     @State private var suggestedClipboardSize = false
     @FocusState private var focusedField: Field?
     private enum Field { case width, height }
-    static let resolutions: [Double] = [72, 300]
     private var pixelWidth: Int? { unit.pixels(width, resolution: resolution) }
     private var pixelHeight: Int? { unit.pixels(height, resolution: resolution) }
     private var valid: Bool { pixelWidth != nil && pixelHeight != nil }
@@ -175,7 +175,6 @@ struct NewCanvasSheet: View {
                     setPixels(size.width, size.height)
                 }
             }
-            if !Self.resolutions.contains(resolution) { resolution = 72 }
             focusedField = .width
         }
     }
