@@ -333,8 +333,8 @@ nonisolated final class MetalLayerEffects: Sendable {
         result[index] = clamp(shape[index] * (1.0 - moved[index]), 0.0, 1.0);
     }
 
-    // Shadow behind, outer glow over it, outside stroke over that, the layer's pixels over that, then a color overlay,
-    // an inner glow, an inner shadow and an inside stroke on top.
+    // Shadow behind, outer glow over it, outside stroke over that, the layer's pixels (recolored by a color overlay)
+    // over that, then an inner glow, an inner shadow and an inside stroke on top.
     kernel void effects_compose(device const uchar4* pixels [[buffer(0)]],
                                 device const float* ring [[buffer(1)]],
                                 device const float* shadow [[buffer(2)]],
@@ -365,13 +365,14 @@ nonisolated final class MetalLayerEffects: Sendable {
             alpha = strokeCoverage + alpha * (1.0 - strokeCoverage);
         }
         float4 source = float4(pixels[index]) / 255.0;
+        // A color overlay recolors the layer's own pixels and keeps their alpha, so a half-transparent black pixel
+        // under a white overlay turns half-transparent white. Laid over the composite instead, it only covered
+        // as much as the pixel did and let the old color show through.
+        if (settings.more.x == 1) {
+            source.xyz = mix(source.xyz, settings.overlayColor.xyz * source.w, settings.overlayColor.w);
+        }
         color = source.xyz + color * (1.0 - source.w);
         alpha = source.w + alpha * (1.0 - source.w);
-        if (settings.more.x == 1) {
-            float coverage = clamp(shape[index] * settings.overlayColor.w, 0.0, 1.0);
-            color = settings.overlayColor.xyz * coverage + color * (1.0 - coverage);
-            alpha = coverage + alpha * (1.0 - coverage);
-        }
         if (settings.more.z == 1) {
             float coverage = clamp(innerGlow[index] * settings.innerGlowColor.w, 0.0, 1.0);
             color = settings.innerGlowColor.xyz * coverage + color * (1.0 - coverage);
