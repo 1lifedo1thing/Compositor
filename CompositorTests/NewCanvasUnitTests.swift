@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import Compositor
 
@@ -31,5 +32,25 @@ import Testing
         session.createNewProject(width: 2550, height: 3300, resolution: 300)
         #expect(session.document?.resolution == 300)
         #expect(try #require(session.projectSnapshot()).manifest.resolution == 300)
+    }
+
+    /// White and black start the canvas with a Background layer of that color, in full-size pixels; transparent with an
+    /// empty layer. The pill steps transparent → white → black.
+    @Test func backgroundFillsTheFirstLayer() throws {
+        #expect(NewCanvasBackground.allCases.map(\.next) == [.white, .black, .transparent])
+        for (background, value) in [(NewCanvasBackground.white, UInt8(255)), (.black, 0)] {
+            let session = EditorSession()
+            session.createNewProject(width: 40, height: 30, background: background.color)
+            let layer = try #require(session.document?.layers.first)
+            #expect(layer.name == "Background")
+            let image = try #require(layer.asset?.image)
+            #expect(image.width == 40 && image.height == 30)
+            let pixels = try BrushRaster.copy(image)
+            let data = try #require(pixels.data).assumingMemoryBound(to: UInt8.self)
+            #expect(data[0] == value && data[3] == 255 && data[(29 * pixels.bytesPerRow) + 39 * 4] == value)
+        }
+        let session = EditorSession()
+        session.createNewProject(width: 40, height: 30, background: NewCanvasBackground.transparent.color)
+        #expect(session.document?.layers.first?.asset == nil, "an empty layer, with no pixels until painted")
     }
 }

@@ -945,19 +945,34 @@ final class EditorSession {
     }
 
     /// `emptyLayer` starts the canvas with a selected blank "Layer 1", as File > New does.
-    func createDocument(width: Int, height: Int, emptyLayer: Bool = false, resolution: Double = 72) {
+    /// `background`: white or black fills the first layer, named Background as in Photoshop; nil leaves it transparent.
+    func createDocument(width: Int, height: Int, emptyLayer: Bool = false, resolution: Double = 72, background: CGColor? = nil) {
         guard !isProjectBusy, !isImporting, (1...DocumentLimits.maxSide).contains(width), (1...DocumentLimits.maxSide).contains(height) else { return }
         commitTransform()
         beginEdit("New Canvas")
         defer { endEdit() }
         var document = CanvasDocument(width: width, height: height, resolution: (1...9600).contains(resolution) ? resolution : 72)
-        let layer = emptyLayer ? ImageLayer(name: "Layer 1", blankSize: document.size) : nil
+        let layer = emptyLayer ? Self.firstLayer(size: document.size, background: background) : nil
         if let layer { document.layers = [layer] }
         self.document = document
         activeLayerID = layer?.id
         renamingLayerID = nil
         viewport.fit(documentSize: document.size)
         showsNewDocument = false
+    }
+
+    /// A new canvas's layer: empty, or filled with the background color in full-size pixels, so painting on it keeps
+    /// every pixel's detail.
+    private static func firstLayer(size: CGSize, background: CGColor?) -> ImageLayer {
+        guard let background, let context = try? BrushRaster.context(width: Int(size.width), height: Int(size.height), mask: false)
+        else { return ImageLayer(name: "Layer 1", blankSize: size) }
+        context.setFillColor(background)
+        context.fill(CGRect(origin: .zero, size: size))
+        guard let image = context.makeImage(), let thumbnail = try? PixelAdjust.thumbnail(of: image)
+        else { return ImageLayer(name: "Layer 1", blankSize: size) }
+        var layer = ImageLayer(name: "Background", blankSize: size)
+        layer.asset = ImportedImage(image: image, thumbnail: thumbnail, name: "Background")
+        return layer
     }
 
     func fit() {

@@ -6,7 +6,16 @@ import ImageIO
 nonisolated enum NewCanvasUnit: String, CaseIterable, Sendable {
     case pixels = "px", inches = "in", centimeters = "cm", millimeters = "mm"
 
-    /// The next unit, for the field's pill: px → in → cm → mm → px.
+    /// The unit written out, for the summary line's pill.
+    var name: String {
+        switch self {
+        case .pixels: "Pixels"
+        case .inches: "Inches"
+        case .centimeters: "Centimeters"
+        case .millimeters: "Millimeters"
+        }
+    }
+    /// The next unit, for the pill: px → in → cm → mm → px.
     var next: NewCanvasUnit { Self.allCases[(Self.allCases.firstIndex(of: self)! + 1) % Self.allCases.count] }
     private var perInch: Double? {
         switch self {
@@ -32,15 +41,30 @@ nonisolated enum NewCanvasUnit: String, CaseIterable, Sendable {
     }
 }
 
+/// What a new canvas starts as: see-through, or a Background layer of white or black.
+nonisolated enum NewCanvasBackground: String, CaseIterable, Sendable {
+    case transparent, white, black
+    var title: String { "\(rawValue.capitalized) canvas" }
+    var next: NewCanvasBackground { Self.allCases[(Self.allCases.firstIndex(of: self)! + 1) % Self.allCases.count] }
+    var color: CGColor? {
+        switch self {
+        case .transparent: nil
+        case .white: CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
+        case .black: CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+        }
+    }
+}
+
 struct NewCanvasSheet: View {
     let session: EditorSession
-    var onCreate: ((Int, Int, Double) -> Void)? = nil
+    var onCreate: ((Int, Int, Double, CGColor?) -> Void)? = nil
     var onOpen: (() -> Void)? = nil
     @State private var width = "1920"
     @State private var height = "1080"
     /// Remembered between canvases: someone working for print at 300 DPI in inches shouldn't set it every time.
     @AppStorage("newCanvasUnit") private var unit = NewCanvasUnit.pixels
     @AppStorage("newCanvasResolution") private var resolution = 72.0
+    @AppStorage("newCanvasBackground") private var background = NewCanvasBackground.transparent
     @State private var suggestedClipboardSize = false
     @FocusState private var focusedField: Field?
     private enum Field { case width, height }
@@ -48,6 +72,10 @@ struct NewCanvasSheet: View {
     private var pixelWidth: Int? { unit.pixels(width, resolution: resolution) }
     private var pixelHeight: Int? { unit.pixels(height, resolution: resolution) }
     private var valid: Bool { pixelWidth != nil && pixelHeight != nil }
+    private var resolutionHelp: String {
+        let size = unit != .pixels ? pixelWidth.flatMap { w in pixelHeight.map { h in " · \(Int(resolution)) DPI: \(w) × \(h) pixels" } } : nil
+        return "Resolution: 72 for screens, 300 for print. Click to switch." + (size ?? "")
+    }
     /// Shows the sizes in another unit, the same canvas written differently.
     private func switchUnit(to new: NewCanvasUnit) {
         if let w = pixelWidth, let h = pixelHeight {
@@ -98,32 +126,39 @@ struct NewCanvasSheet: View {
                 Image(systemName: "multiply").foregroundStyle(.tertiary).padding(.top, 20)
                 dimension("Height", text: $height, field: .height)
             }
+            // The settings are pills, each changed the same way: click to step to the next choice.
             HStack(spacing: 4) {
-                if valid {
-                    // In print units the pixels follow the DPI; in pixels, the DPI is just stored with the file.
-                    Text("Transparent canvas · sRGB ·")
-                    if unit != .pixels, let w = pixelWidth, let h = pixelHeight {
-                        Text("\(w) × \(h) px ·").monospacedDigit()
-                    }
-                } else {
-                    Text(unit == .pixels ? "Enter whole numbers from 1 to \(DocumentLimits.maxSide.formatted()) pixels."
-                                         : "Enter a size up to \(DocumentLimits.maxSide.formatted()) pixels at this DPI.")
-                        .foregroundStyle(.orange)
+                CyclePill(background.title, help: "Start see-through, or with a white or black Background layer. Click to switch.") {
+                    background = background.next
                 }
-                CyclePill("\(Int(resolution)) DPI", help: "Resolution: 72 for screens, 300 for print. Click to switch.") {
+                .accessibilityIdentifier("canvasBackground")
+                Text("·")
+                CyclePill(unit.name, help: "Units: pixels, inches, centimeters or millimeters. Click to switch.") {
+                    switchUnit(to: unit.next)
+                }
+                .accessibilityIdentifier("canvasUnit")
+                Text("·")
+                // In print units the pixels follow the DPI; in pixels, the DPI is just stored with the file. The pixel
+                // size it makes is in the pill's hover text, out of the way until it's wanted.
+                CyclePill("\(Int(resolution)) DPI", help: resolutionHelp) {
                     resolution = resolution == 300 ? 72 : 300
                 }
                 .accessibilityIdentifier("canvasResolution")
             }
             .font(.callout).foregroundStyle(.secondary)
+            if !valid {
+                Text(unit == .pixels ? "Enter whole numbers from 1 to \(DocumentLimits.maxSide.formatted()) pixels."
+                                     : "Enter a size up to \(DocumentLimits.maxSide.formatted()) pixels at this DPI.")
+                    .font(.callout).foregroundStyle(.orange)
+            }
             HStack(spacing: 10) {
                 Button("Open project") { onOpen?() }.buttonStyle(.bordered)
                 Button("Import image") { session.showsImporter = true }.buttonStyle(.bordered)
                 Spacer()
                 Button("Create canvas") {
                     guard let w = pixelWidth, let h = pixelHeight else { return }
-                    if let onCreate { onCreate(w, h, resolution) }
-                    else { session.createDocument(width: w, height: h, emptyLayer: true, resolution: resolution) }
+                    if let onCreate { onCreate(w, h, resolution, background.color) }
+                    else { session.createDocument(width: w, height: h, emptyLayer: true, resolution: resolution, background: background.color) }
                 }
                 .configuredNativeShortcut(.return).buttonStyle(.borderedProminent)
                 .disabled(!valid).accessibilityIdentifier("createCanvas")
@@ -173,10 +208,7 @@ struct NewCanvasSheet: View {
                 TextField(title, text: text).textFieldStyle(.plain)
                     .focused($focusedField, equals: field)
                     .accessibilityIdentifier(title.lowercased() + "Input")
-                CyclePill(unit.rawValue, help: "Units: pixels, inches, centimeters or millimeters. Click to switch.") {
-                    switchUnit(to: unit.next)
-                }
-                .accessibilityIdentifier(title.lowercased() + "Unit")
+                Text(unit.rawValue).foregroundStyle(.secondary)
             }
             .padding(12).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 7))
         }
