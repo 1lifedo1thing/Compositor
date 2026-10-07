@@ -44,7 +44,7 @@ struct LayersPanel: View {
                     }
                 } label: { Image(systemName: "sparkles").footerHitArea() }
                     .menuStyle(.borderlessButton).fixedSize()
-                    .help("Layer effects: stroke and drop shadow").accessibilityLabel("Layer effects")
+                    .help("Add layer effect").accessibilityLabel("Layer effects")
                     .accessibilityIdentifier("layerEffects").disabled(!session.canEditEffects)
                 Menu {
                     ForEach(AdjustmentKind.allCases, id: \.self) { kind in
