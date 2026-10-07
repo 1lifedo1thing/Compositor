@@ -32,10 +32,10 @@ struct LayersPanel: View {
             Divider()
             // No spacing: each button's hit area supplies it (8 pt either side makes the 16 pt gap).
             HStack(spacing: 0) {
-                Button { session.addBlankLayer() } label: { Image(systemName: "plus.square").footerHitArea() }
+                Button { session.addBlankLayer() } label: { Image(systemName: "plus.square").foregroundStyle(.primary).footerHitArea() }
                     .help("New blank layer (⇧⌘N)").accessibilityLabel("New blank layer")
                     .accessibilityIdentifier("addBlankLayer").disabled(!session.canEditLayers)
-                Button { session.groupSelectedLayers() } label: { Image(systemName: "folder.badge.plus").footerHitArea() }
+                Button { session.groupSelectedLayers() } label: { Image(systemName: "folder.badge.plus").foregroundStyle(.primary).footerHitArea() }
                     .help("Group selected layers (⌘G)").accessibilityLabel("New folder").disabled(!session.canEditLayers)
                 LayerMaskMenu(session: session)
                 Menu {
@@ -53,7 +53,7 @@ struct LayersPanel: View {
                 } label: { Image(systemName: "circle.lefthalf.filled").footerHitArea() }
                     .menuStyle(.borderlessButton).fixedSize().help("New adjustment layer").disabled(!session.canEditLayers)
                 Spacer()
-                Button { session.deleteLayerOrMask() } label: { Image(systemName: "trash").footerHitArea() }
+                Button { session.deleteLayerOrMask() } label: { Image(systemName: "trash").foregroundStyle(.primary).footerHitArea() }
                     .help(session.selectedEffect != nil ? "Delete selected effect" : session.isMaskSelected ? "Delete layer mask" : session.selectedLayerIDs.count > 1 ? "Delete selected layers" : "Delete selected layer")
                     .accessibilityLabel(session.selectedEffect != nil ? "Delete selected effect" : session.isMaskSelected ? "Delete layer mask" : session.selectedLayerIDs.count > 1 ? "Delete selected layers" : "Delete selected layer")
                     .accessibilityIdentifier("deleteLayer")
