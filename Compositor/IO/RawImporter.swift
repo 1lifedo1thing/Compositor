@@ -120,7 +120,7 @@ nonisolated enum RawImporter {
     /// The image as 8-bit sRGB pixels, rounded with a little noise rather than straight down. A RAW holds 12–14 bits;
     /// rounded plainly to 8, a smooth sky came out in visible steps, which curves and levels then pulled further apart.
     /// Noise of about one 8-bit step, too fine to see, breaks the steps up, as Lightroom does on export. The frame is
-    /// rendered once at 16 bits, then rounded on every core: a few tens of milliseconds on a 20-megapixel photo.
+    /// rendered once at 16 bits, then rounded on every core in C: a few tens of milliseconds on a 20-megapixel photo.
     static func dithered(_ image: CIImage, context: CIContext) -> CGImage? {
         let extent = image.extent.integral
         let width = Int(extent.width), height = Int(extent.height)
@@ -131,35 +131,11 @@ nonisolated enum RawImporter {
             context.render(image, toBitmap: buffer.baseAddress!, rowBytes: width * 8, bounds: extent, format: .RGBA16,
                            colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
         }
-        let rowBytes = target.bytesPerRow
-        wide.withUnsafeBufferPointer { values in
-            BrushRaster.inBands(count: height) { first, count in
-                for y in first..<first + count {
-                    let out = data + y * rowBytes
-                    for x in 0..<width {
-                        let i = (y * width + x) * 4
-                        for c in 0..<3 {
-                            // Two uniform draws added: noise that's strongest at zero and gone past one step.
-                            let value = Float(values[i + c]) * (255 / 65535) + Self.noise(x, y, c) + Self.noise(x, y, c + 3) - 1
-                            out[x * 4 + c] = UInt8(max(0, min(255, value.rounded())))
-                        }
-                        out[x * 4 + 3] = UInt8((Float(values[i + 3]) * (255 / 65535)).rounded())
-                        // Premultiplied: the noise mustn't lift a color past its own alpha.
-                        for c in 0..<3 where out[x * 4 + c] > out[x * 4 + 3] { out[x * 4 + c] = out[x * 4 + 3] }
-                    }
-                }
-            }
-        }
+        // In C, where the per-pixel work is quick in any build.
+        wide.withUnsafeBufferPointer { dither_quantize16($0.baseAddress!, data, width, height, target.bytesPerRow) }
         return target.makeImage()
     }
 
-    /// A fixed pseudo-random value in 0..<1 for each pixel and draw, so the same develop gives the same pixels.
-    private static func noise(_ x: Int, _ y: Int, _ draw: Int) -> Float {
-        var h = UInt32(truncatingIfNeeded: x) &* 0x9E37_79B1 ^ UInt32(truncatingIfNeeded: y) &* 0x85EB_CA77
-            ^ UInt32(truncatingIfNeeded: draw) &* 0xC2B2_AE3D
-        h ^= h >> 15; h &*= 0x2C1B_3C6D; h ^= h >> 12; h &*= 0x297A_2D39; h ^= h >> 15
-        return Float(h >> 8) / Float(1 << 24)
-    }
 
     /// The frame's size without developing it, so an oversized file is refused before the work.
     static func pixelSize(_ url: URL) -> (width: Int, height: Int)? {
