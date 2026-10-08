@@ -76,7 +76,7 @@ struct ShortcutDefinition: Identifiable {
             entry("New Canvas", "n", 1, menu: true), entry("Open Project", "o", 1, menu: true),
             entry("Save", "s", 1, menu: true), entry("Save As", "s", 9, menu: true),
             entry("Export PNG", "e", 9, menu: true), entry("Export JPEG", "s", 11, menu: true),
-            entry("Close Project", "w", 1, menu: true), entry("Fit Canvas", "0", 1, menu: true), entry("Command Palette", "f", 1, menu: true),
+            entry("Close Project", "w", 1, menu: true), entry("Fit Canvas", "0", 1, menu: true), entry("Search Commands", "f", 1, menu: true),
             entry("Actual Pixels", "1", 1, menu: true), entry("Zoom In", "=", 1, menu: true),
             entry("Zoom Out", "-", 1, menu: true), entry("Show Transform Controls", "h", 1, menu: true),
             entry("Hide Compositor", "h", 3, menu: true), entry("Cut", "x", 1, menu: true),
@@ -97,7 +97,7 @@ struct ShortcutDefinition: Identifiable {
             entry("Show Rulers", "r", 1, menu: true), entry("Snap", ";", 9, menu: true),
             entry("Lock Guides", ";", 3, menu: true)
         ]
-        for (title, key) in [("Canvas Only: full screen on black, without panels", "f"), ("Select tool", "a"), ("Move / Transform tool", "v"), ("Hand tool", "h"),
+        for (title, key) in [("Toggle Fullscreen: the canvas alone on black (Esc also leaves)", "f"), ("Select tool", "a"), ("Move / Transform tool", "v"), ("Hand tool", "h"),
             ("Zoom tool", "z"), ("Brush tool", "b"), ("Eraser", "e"), ("Spot Healing", "j"),
             ("Clone Stamp", "s"), ("Type tool", "t"), ("Gradient tool", "g"), ("Shape tool", "u"),
             ("Eyedropper tool", "i"), ("Marquee / cycle shape", "m"), ("Magic", "w"),
