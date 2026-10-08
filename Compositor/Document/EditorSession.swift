@@ -632,7 +632,8 @@ final class EditorSession {
     private func restore(_ snapshot: DocumentHistory.Snapshot) {
         cancelCrop()
         cancelGradient()
-        let changedCanvas = document?.id != snapshot.document?.id
+        // A different canvas, or this one at another size (a rotation), is fitted to the window again.
+        let changedCanvas = document?.id != snapshot.document?.id || document?.size != snapshot.document?.size
         let keepMaskTarget = isMaskSelected && activeLayerID == snapshot.activeLayerID
         document = snapshot.document
         activeLayerID = snapshot.activeLayerID

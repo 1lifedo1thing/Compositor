@@ -274,6 +274,10 @@ struct CompositorApp: App {
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
                     Group {
                         Divider()
+                        Button("Rotate Canvas 90° Clockwise") { session.rotateCanvas(clockwise: true) }
+                            .disabled(!session.canEditLayers)
+                        Button("Rotate Canvas 90° Counterclockwise") { session.rotateCanvas(clockwise: false) }
+                            .disabled(!session.canEditLayers)
                         Button("Flip Canvas Horizontal") { session.flipCanvas(horizontally: true) }
                             .disabled(!session.canEditLayers)
                         Button("Flip Canvas Vertical") { session.flipCanvas(horizontally: false) }
