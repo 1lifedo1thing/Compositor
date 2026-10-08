@@ -32,6 +32,8 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // AppKit's own switches for two of the Edit menu's text extras (see `removeSystemTextItems`).
+        UserDefaults.standard.register(defaults: ["NSDisabledDictationMenuItem": true, "NSDisabledCharacterPaletteMenuItem": true])
         // Always dark, alerts and open/save panels included, whatever the Mac is set to.
         NSApp.appearance = NSAppearance(named: .darkAqua)
         // Slider knobs snap to a click on the track instead of gliding there.
@@ -39,7 +41,57 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // macOS adds Writing Tools, AutoFill, Start Dictation and Emoji & Symbols to the Edit menu; they're for typing
+        // text, not editing images, and only got in the way. Taken out once the menus exist, and again whenever the
+        // menu bar is opened, in case SwiftUI has rebuilt them since.
+        DispatchQueue.main.async { Self.removeSystemTextItems() }
+        // Run as the menu opens (no queue), before it's drawn.
+        NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { _ in
+            MainActor.assumeIsolated { Self.removeSystemTextItems() }
+        }
+        // Writing Tools and AutoFill are put back each time the Edit menu opens, so they're taken out again as they're
+        // added, before the menu is drawn.
+        NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: nil) { note in
+            guard let menu = note.object as? NSMenu, let index = note.userInfo?["NSMenuItemIndex"] as? Int else { return }
+            MainActor.assumeIsolated { Self.removeIfSystemTextItem(at: index, in: menu) }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [updater] in updater.startUpdater() }
+    }
+
+    /// Takes macOS's text-typing extras out of the menu bar's menus, found by what they do rather than their titles, so
+    /// it holds in any language, then tidies the separators they leave behind.
+    @MainActor static func removeSystemTextItems() {
+        for top in NSApp.mainMenu?.items ?? [] {
+            guard let menu = top.submenu else { continue }
+            let extras = menu.items.filter(isSystemTextItem)
+            guard !extras.isEmpty else { continue }
+            extras.forEach(menu.removeItem)
+            tidySeparators(menu)
+        }
+    }
+
+    /// One item just added to a menu bar menu: taken out again if it's one of the text extras.
+    @MainActor private static func removeIfSystemTextItem(at index: Int, in menu: NSMenu) {
+        guard menu.supermenu === NSApp.mainMenu, menu.items.indices.contains(index), isSystemTextItem(menu.items[index]) else { return }
+        menu.removeItem(at: index)
+        tidySeparators(menu)
+    }
+
+    private static func isSystemTextItem(_ item: NSMenuItem) -> Bool {
+        let actions: Set<String> = ["startDictation:", "orderFrontCharacterPalette:"]
+        let identifiers: Set<String> = ["__NSTextViewContextSubmenuIdentifierWritingTools", "_NSMenuItemAutoFillIdentifier",
+                                        "_NSMenuItemLegacyWritingToolsSeparatorIdentifier"]
+        return item.identifier.map { identifiers.contains($0.rawValue) } == true
+            || item.action.map { actions.contains(NSStringFromSelector($0)) } == true
+    }
+
+    /// No separator left at the end of a menu, or two in a row.
+    private static func tidySeparators(_ menu: NSMenu) {
+        while menu.items.last?.isSeparatorItem == true { menu.removeItem(at: menu.items.count - 1) }
+        for index in stride(from: menu.items.count - 1, to: 0, by: -1)
+        where menu.items[index].isSeparatorItem && menu.items[index - 1].isSeparatorItem {
+            menu.removeItem(at: index)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
