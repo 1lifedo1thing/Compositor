@@ -2211,6 +2211,7 @@ final class CanvasView: NSView {
             window?.invalidateCursorRects(for: self)
         } else if event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
             switch event.charactersIgnoringModifiers?.lowercased() {
+            case "f": if !event.isARepeat { CommandPaletteController.shared.toggle(session: session, over: window) }
             case "x": session.swapPaletteColors()
             case "d": session.resetPaletteColors()
             case "b": session.selectTool(.brush); session.brushMode = .paint

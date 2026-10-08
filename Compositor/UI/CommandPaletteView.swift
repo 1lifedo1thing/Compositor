@@ -82,7 +82,7 @@ final class CommandPaletteController {
                                                                       close: { [weak self] in self?.close() }))
         panel.setContentSize(NSSize(width: 560, height: 380))
         if let frame = window?.frame {
-            panel.setFrameTopLeftPoint(NSPoint(x: frame.midX - 280, y: frame.maxY - 110))
+            panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 190))
         } else {
             panel.center()
         }
