@@ -28,20 +28,25 @@ struct CommandPaletteView: View {
                                 .onTapGesture { run(entry) }
                         }
                     }
-                    .padding(6)
+                    // Nothing below the last row: the list runs on under the panel's bottom edge.
+                    .padding([.horizontal, .top], 6)
+                }
+                .frame(maxHeight: .infinity)
+                .overlay {
+                    if model.results.isEmpty { Text("No commands match").foregroundStyle(.secondary) }
                 }
                 .onChange(of: model.selection) { _, _ in
                     if let id = model.selected?.id { scroller.scrollTo(id) }
                 }
             }
-            if model.results.isEmpty {
-                Text("No commands match").foregroundStyle(.secondary).padding(20)
-            }
         }
-        .frame(width: 560, height: 380)
+        // The whole panel: the list fills it to the bottom edge.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The panel's title bar is transparent and hidden; its height isn't a margin to keep.
         .ignoresSafeArea()
-        .onAppear { searching = true }
+        // Once the panel is the key window, a moment after it appears: asked for sooner, the field didn't take it,
+        // and typing beeped until it was clicked.
+        .onAppear { DispatchQueue.main.async { searching = true } }
     }
 
     private func row(_ entry: CommandPaletteEntry, chosen: Bool) -> some View {
@@ -69,7 +74,7 @@ final class CommandPaletteController {
     private weak var window: NSWindow?
     var isOpen: Bool { panel?.isVisible == true }
 
-    /// ⌥⌘P: opens the palette over `window`, or closes it when it's already open. `menu` is the menu bar to list,
+    /// F on the canvas: opens the palette over `window`, or closes it when it's already open. `menu` is the menu bar to list,
     /// the app's own unless a test passes one.
     func toggle(session: EditorSession, over window: NSWindow?, menu: NSMenu? = nil) {
         if isOpen { close(); return }
@@ -78,8 +83,12 @@ final class CommandPaletteController {
         let entries = (bar.map { CommandPaletteMenu.entries(in: $0, skipping: Self.skipped) } ?? []) + CommandPaletteEntry.tools(for: session)
         let model = CommandPaletteModel(entries: entries)
         let panel = self.panel ?? makePanel()
-        panel.contentView = NSHostingView(rootView: CommandPaletteView(model: model, run: { [weak self] in self?.run($0) },
-                                                                      close: { [weak self] in self?.close() }))
+        let host = NSHostingView(rootView: CommandPaletteView(model: model, run: { [weak self] in self?.run($0) },
+                                                             close: { [weak self] in self?.close() }))
+        // The panel keeps the size given below rather than growing to what SwiftUI would like.
+        host.sizingOptions = []
+        host.frame = NSRect(x: 0, y: 0, width: 560, height: 380)
+        panel.contentView = host
         panel.setContentSize(NSSize(width: 560, height: 380))
         if let frame = window?.frame {
             panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 190))

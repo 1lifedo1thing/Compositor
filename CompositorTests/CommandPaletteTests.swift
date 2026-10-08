@@ -32,6 +32,18 @@ struct CommandPaletteTests {
         #expect(CommandPaletteSearch.rank(entries, query: "e u").map(\.id).last == "Edit › Undo", "disabled after enabled")
     }
 
+    /// Typing a tool's name finds the tool first, not a long title that happens to hold its letters scattered.
+    @Test func wholeWordsBeatScatteredLetters() {
+        let entries = [entry("Layer › New Adjustment Layer › Hue/Saturation…"), entry("Tool › Lasso"), entry("Tool › Polygonal Lasso")]
+        #expect(CommandPaletteSearch.rank(entries, query: "lasso").map(\.id) == ["Tool › Lasso", "Tool › Polygonal Lasso",
+                                                                               "Layer › New Adjustment Layer › Hue/Saturation…"])
+        let model = CommandPaletteModel(entries: entries)
+        model.query = "lasso"
+        model.move(by: 1)
+        model.query = "lasso"
+        #expect(model.selected?.id == "Tool › Polygonal Lasso", "Return writing the same text back keeps the choice")
+    }
+
     /// Against the app's own SwiftUI menu bar, not a hand-built one: its commands are listed, disabled ones greyed
     /// (SwiftUI takes their action away), and running one runs its SwiftUI action.
     @Test func realMenuBarRunsItsCommands() async throws {
