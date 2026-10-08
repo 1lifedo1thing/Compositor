@@ -555,6 +555,8 @@ final class EditorSession {
     /// The RAW file being developed, and the settings the sheet is editing (see RawImporter).
     var rawDevelop: (url: URL, settings: RawDevelopSettings)?
     var showsRawDevelop = false { didSet { resumeFileRequests() } }
+    /// Import was pressed and the full frame is developing: the sheet stays up, showing that, until the layer is in.
+    var rawImporting = false
     @ObservationIgnored private var rawContinuation: CheckedContinuation<RawDevelopSettings?, Never>?
     /// Tests assign this to develop without a sheet.
     @ObservationIgnored var confirmRawDevelop: ((URL, RawDevelopSettings) async -> RawDevelopSettings?)?
@@ -570,12 +572,18 @@ final class EditorSession {
         }
     }
     func finishRawDevelop(_ settings: RawDevelopSettings?) {
-        showsRawDevelop = false
-        rawDevelop = nil
-        Task { await RawImporter.Queue.shared.release() }
+        // Importing, the sheet waits for the develop to finish (see `endRawDevelop`); cancelling closes it now.
+        if settings != nil, rawContinuation != nil { rawImporting = true } else { endRawDevelop() }
         let continuation = rawContinuation
         rawContinuation = nil
         continuation?.resume(returning: settings)
+    }
+    /// Closes the develop sheet once the RAW is in, or when it was cancelled.
+    func endRawDevelop() {
+        showsRawDevelop = false
+        rawImporting = false
+        rawDevelop = nil
+        Task { await RawImporter.Queue.shared.release() }
     }
     @ObservationIgnored private var conversionContinuation: CheckedContinuation<Bool, Never>?
     /// Cancel pressed while a Photoshop file was still being read.
@@ -797,6 +805,7 @@ final class EditorSession {
                     guard size.width <= DocumentLimits.maxSide, size.height <= DocumentLimits.maxSide,
                           size.width * size.height <= DocumentLimits.documentPixelBudget - usedPixels else { throw ImageImportError.tooLarge }
                     guard let settings = await developRaw(url) else { continue }
+                    defer { if rawImporting { endRawDevelop() } }
                     // Seconds of work: off the main actor, or pressing Import freezes the window.
                     guard let developed = await RawImporter.Queue.shared.develop(url, settings: settings, limit: nil)
                     else { throw ImageImportError.unreadable }
