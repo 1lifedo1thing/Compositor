@@ -727,4 +727,36 @@ struct CameraRawTests {
         for _ in 0..<4 { _ = try settings.apply(saturated) }
         #expect(try pixels(try settings.apply(picture)) == first)
     }
+
+    /// Color noise reduction takes the random color out of grain and keeps its brightness: speckle of every hue over
+    /// a gray goes most of the way back to the gray at 100. Blurring saturation alone, each speck kept its own hue and
+    /// the speckle stayed.
+    @Test func colorNoiseReductionRemovesColorGrainNotBrightness() throws {
+        let context = try BrushRaster.context(width: 120, height: 120, mask: false)
+        let bytes = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        var seed: UInt32 = 12345
+        for y in 0..<120 { for x in 0..<120 {
+            let p = y * context.bytesPerRow + x * 4
+            for c in 0..<3 { seed = seed &* 1664525 &+ 1013904223; bytes[p + c] = UInt8(64 + Int(seed >> 25)) }
+            bytes[p + 3] = 255
+        } }
+        let grain = try #require(context.makeImage())
+        func measure(_ image: CGImage) throws -> (color: Double, brightness: Double) {
+            let copy = try BrushRaster.copy(image)
+            let d = try #require(copy.data).assumingMemoryBound(to: UInt8.self)
+            var color = 0.0, brightness = 0.0
+            for y in 10..<110 { for x in 10..<110 {
+                let p = y * copy.bytesPerRow + x * 4
+                let r = Double(d[p]), g = Double(d[p + 1]), b = Double(d[p + 2])
+                color += max(r, g, b) - min(r, g, b); brightness += 0.2126 * r + 0.7152 * g + 0.0722 * b
+            } }
+            return (color / 10_000, brightness / 10_000)
+        }
+        var settings = CameraRawSettings()
+        let before = try measure(settings.apply(grain))
+        settings.detail.noiseColor = 100
+        let after = try measure(settings.apply(grain))
+        #expect(after.color < before.color * 0.25, "color speckle \(before.color) → \(after.color)")
+        #expect(abs(after.brightness - before.brightness) < 1, "brightness \(before.brightness) → \(after.brightness)")
+    }
 }
