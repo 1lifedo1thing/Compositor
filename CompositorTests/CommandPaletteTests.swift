@@ -44,6 +44,13 @@ struct CommandPaletteTests {
         #expect(model.selected?.id == "Tool › Polygonal Lasso", "Return writing the same text back keeps the choice")
     }
 
+    /// Each typed word starting a word ranks a title high, the shortest first: "new layer" is New Blank Layer.
+    @Test func typedWordsStartingWords() {
+        let entries = [entry("Layer › New Adjustment Layer › Curves…"), entry("Layer › New Adjustment Layer › Exposure…"),
+                       entry("Layer › Duplicate Layer"), entry("Layer › New Blank Layer")]
+        #expect(CommandPaletteSearch.rank(entries, query: "new layer").first?.id == "Layer › New Blank Layer")
+    }
+
     /// Against the app's own SwiftUI menu bar, not a hand-built one: its commands are listed, disabled ones greyed
     /// (SwiftUI takes their action away), and running one runs its SwiftUI action.
     @Test func realMenuBarRunsItsCommands() async throws {

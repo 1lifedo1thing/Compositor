@@ -37,19 +37,46 @@ enum CommandPaletteSearch {
             previous = found
             from = found + 1
         }
-        // What was typed, found whole, beats the same letters scattered: "lasso" is the Lasso, not "Layer › … Hue/
-        // Saturation" with an l, a, s, s and o spread through it. At the start of a word, more so.
+        // How the typed text was found, best first: whole at the start of a word ("lasso" in Lasso); each typed word
+        // starting a word, in order ("new layer" in New Blank Layer); whole inside a word; spaces aside; and last the
+        // letters scattered, as an abbreviation ("gb" in Gaussian Blur). "lasso" is the Lasso, not "Layer › … Hue/
+        // Saturation" with an l, a, s, s and o spread through it.
         let title = String(letters), phrase = query.lowercased().trimmingCharacters(in: .whitespaces)
-        var whole = 0
-        if let range = title.range(of: phrase) {
-            let atWordStart = range.lowerBound == title.startIndex || !title[title.index(before: range.lowerBound)].isLetter
-            whole = atWordStart ? 3000 : 2000
+        let words = phrase.split(separator: " ").map(String.init)
+        let tier: Int
+        if wordsStartWords([phrase], in: title) {
+            tier = 5
+        } else if words.count > 1, wordsStartWords(words, in: title) {
+            tier = 4
+        } else if title.contains(phrase) {
+            tier = 3
         } else if title.replacingOccurrences(of: " ", with: "").contains(String(wanted)) {
-            whole = 1000
+            tier = 2
+        } else {
+            tier = 1
         }
-        // Between equal matches, a clearly shorter title is the likelier one; titles within a few letters of each
-        // other keep their order, so a tool's modes (Rectangular, then Elliptical Marquee) come as its tabs show them.
-        return (whole + total) * 100 - letters.count / 4
+        // Found the same way, a clearly shorter title is the likelier one; titles within a few letters of each other
+        // keep their order, so a tool's modes (Rectangular, then Elliptical Marquee) come as its tabs show them.
+        // Scattered letters are ranked by how well they fall instead.
+        return tier * 1_000_000 + (tier == 1 ? total * 100 : 0) - letters.count / 4
+    }
+
+    /// Each word starts a word of `title`, in order.
+    private static func wordsStartWords(_ words: [String], in title: String) -> Bool {
+        var from = title.startIndex
+        for word in words {
+            var found: String.Index?
+            var search = from
+            while let range = title.range(of: word, range: search..<title.endIndex) {
+                if range.lowerBound == title.startIndex || !title[title.index(before: range.lowerBound)].isLetter {
+                    found = range.upperBound; break
+                }
+                search = title.index(after: range.lowerBound)
+            }
+            guard let next = found else { return false }
+            from = next
+        }
+        return true
     }
 
     /// The entries that match, best first, with enabled ones ahead of disabled; with no query, all of them in menu
@@ -138,6 +165,21 @@ enum CommandPaletteMenu {
 
 extension CommandPaletteEntry {
     /// The tools, run by choosing them. With no document open there is nothing to use them on, so they're disabled.
+    /// Commands that live on buttons rather than in the menu bar, so the palette finds them too: adding a layer mask,
+    /// as the Layers panel's mask button does (Option for the black one).
+    static func layerCommands(for session: EditorSession) -> [CommandPaletteEntry] {
+        let canAdd = session.canEditMask && session.activeLayer?.mask == nil
+        let selected = session.selection != nil
+        return [
+            CommandPaletteEntry(id: selected ? "Layer › Add Layer Mask from Selection" : "Layer › Add Layer Mask",
+                                shortcut: nil, isEnabled: canAdd,
+                                perform: { [weak session] in session?.addMask(revealing: true) }),
+            CommandPaletteEntry(id: selected ? "Layer › Add Layer Mask Hiding Selection" : "Layer › Add Layer Mask (Hide All)",
+                                shortcut: nil, isEnabled: canAdd,
+                                perform: { [weak session] in session?.addMask(revealing: false) }),
+        ]
+    }
+
     /// Every tool, and each of a tool's modes on its own, by the name someone would search for: Liquify is a mode of
     /// the Smear tool, Polygonal Lasso a mode of the Lasso, and neither is in a menu. The tool's key shows where a
     /// command's shortcut would.

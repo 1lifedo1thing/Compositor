@@ -45,6 +45,12 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
         // text, not editing images, and only got in the way. Taken out once the menus exist, and again whenever the
         // menu bar is opened, in case SwiftUI has rebuilt them since.
         DispatchQueue.main.async { Self.removeSystemTextItems() }
+        // F opens the command palette from anywhere in the editor: the canvas, the Layers panel, the tool bar.
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.opensCommandPalette(event) else { return event }
+            CommandPaletteController.shared.toggle(session: self.session, over: self.projects.window)
+            return nil
+        }
         // Run as the menu opens (no queue), before it's drawn.
         NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { _ in
             MainActor.assumeIsolated { Self.removeSystemTextItems() }
@@ -56,6 +62,19 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { Self.removeIfSystemTextItem(at: index, in: menu) }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [updater] in updater.startUpdater() }
+    }
+
+    /// A plain F in the editor window, with nothing to type into and no dialog open: not while a text field or a text
+    /// layer has the keyboard, and not over Hue/Saturation, Curves, the color picker or another dialog.
+    private func opensCommandPalette(_ event: NSEvent) -> Bool {
+        guard event.charactersIgnoringModifiers?.lowercased() == "f", !event.isARepeat,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              let window = NSApp.keyWindow, window === projects.window, window.attachedSheet == nil,
+              !(window.firstResponder is NSText) else { return false }
+        let session = session
+        return session.document != nil && session.textDraft == nil && session.filterEdit == nil && session.hueSaturation == nil
+            && session.levels == nil && session.colorPicker == nil && session.adjustmentEditingID == nil
+            && session.effectsEditing == nil && session.colorRange == nil && session.selectionAmountOperation == nil
     }
 
     /// Takes macOS's text-typing extras out of the menu bar's menus, found by what they do rather than their titles, so
