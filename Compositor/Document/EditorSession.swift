@@ -299,6 +299,8 @@ final class EditorSession {
     }
     /// User guides. Hidden extras do not snap.
     var showsGuides = ToolDefaults.bool("guides", true) { didSet { ToolDefaults.set(showsGuides, "guides") } }
+    /// F: the canvas alone on black, filling the screen, with every panel and bar put away. F again brings them back.
+    var canvasOnly = false
     var showsRulers = ToolDefaults.bool("rulers", false) { didSet { ToolDefaults.set(showsRulers, "rulers") } }
     /// Master snap switch (View > Snap). On so today's layer/canvas snap keeps working.
     var snapEnabled = ToolDefaults.bool("snap", true) {

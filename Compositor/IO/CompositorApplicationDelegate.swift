@@ -45,10 +45,10 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
         // text, not editing images, and only got in the way. Taken out once the menus exist, and again whenever the
         // menu bar is opened, in case SwiftUI has rebuilt them since.
         DispatchQueue.main.async { Self.removeSystemTextItems() }
-        // F opens the command palette from anywhere in the editor: the canvas, the Layers panel, the tool bar.
+        // F switches Canvas Only from anywhere in the editor: the canvas, the Layers panel, the tool bar.
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.opensCommandPalette(event) else { return event }
-            CommandPaletteController.shared.toggle(session: self.session, over: self.projects.window)
+            guard let self, self.isCanvasOnlyKey(event) else { return event }
+            self.toggleCanvasOnly()
             return nil
         }
         // Run as the menu opens (no queue), before it's drawn.
@@ -64,9 +64,65 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [updater] in updater.startUpdater() }
     }
 
+    /// Black over the whole screen just behind the window in Canvas Only, so the window's rounded corners show black
+    /// rather than whatever is behind them.
+    private var canvasOnlyBackdrop: NSWindow?
+    /// The window as it was before Canvas Only (F) took the whole screen, to put it back exactly.
+    private var windowBeforeCanvasOnly: (frame: NSRect, transparentTitlebar: Bool, titleVisibility: NSWindow.TitleVisibility,
+                                         fullSizeContent: Bool, presentation: NSApplication.PresentationOptions)?
+
+    /// Canvas Only: the canvas alone on black over the whole screen, without panels, bars, the menu bar or the Dock;
+    /// again, the window as it was. The window covers the screen itself, at once: macOS's own full screen takes a
+    /// second and slides the window into a new space.
+    func toggleCanvasOnly() {
+        guard let window = projects.window else { return }
+        let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        if !session.canvasOnly {
+            // Already in macOS full screen, it has the screen; only the panels need putting away.
+            if window.styleMask.contains(.fullScreen) { window.toolbar?.isVisible = false }
+            if !window.styleMask.contains(.fullScreen), let screen = window.screen ?? NSScreen.main {
+                windowBeforeCanvasOnly = (window.frame, window.titlebarAppearsTransparent, window.titleVisibility,
+                                          window.styleMask.contains(.fullSizeContentView), NSApp.presentationOptions)
+                NSApp.presentationOptions = [.hideDock, .hideMenuBar]
+                window.toolbar?.isVisible = false
+                window.styleMask.insert(.fullSizeContentView)
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+                buttons.forEach { window.standardWindowButton($0)?.isHidden = true }
+                window.setFrame(screen.frame, display: true, animate: false)
+                let backdrop = canvasOnlyBackdrop ?? NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                backdrop.backgroundColor = .black
+                backdrop.isReleasedWhenClosed = false
+                backdrop.ignoresMouseEvents = true
+                backdrop.hasShadow = false
+                backdrop.setFrame(screen.frame, display: false)
+                backdrop.order(.below, relativeTo: window.windowNumber)
+                canvasOnlyBackdrop = backdrop
+            }
+            session.canvasOnly = true
+        } else {
+            session.canvasOnly = false
+            // In order: the window's title bar as it was, then its toolbar, then its size, so the toolbar lays its
+            // buttons out beside the window buttons as it did at launch.
+            if let before = windowBeforeCanvasOnly {
+                NSApp.presentationOptions = before.presentation
+                if !before.fullSizeContent { window.styleMask.remove(.fullSizeContentView) }
+                window.titlebarAppearsTransparent = before.transparentTitlebar
+                window.titleVisibility = before.titleVisibility
+                buttons.forEach { window.standardWindowButton($0)?.isHidden = false }
+                window.toolbar?.isVisible = true
+                window.setFrame(before.frame, display: true, animate: false)
+                canvasOnlyBackdrop?.orderOut(nil)
+                windowBeforeCanvasOnly = nil
+            } else {
+                window.toolbar?.isVisible = true
+            }
+        }
+    }
+
     /// A plain F in the editor window, with nothing to type into and no dialog open: not while a text field or a text
     /// layer has the keyboard, and not over Hue/Saturation, Curves, the color picker or another dialog.
-    private func opensCommandPalette(_ event: NSEvent) -> Bool {
+    private func isCanvasOnlyKey(_ event: NSEvent) -> Bool {
         guard event.charactersIgnoringModifiers?.lowercased() == "f", !event.isARepeat,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
               let window = NSApp.keyWindow, window === projects.window, window.attachedSheet == nil,
