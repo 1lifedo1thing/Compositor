@@ -8,10 +8,7 @@ struct LayerMaskMenu: View {
     var body: some View {
         Button {
             session.addMask(revealing: NSApp.currentEvent?.modifierFlags.contains(.option) != true)
-        } label: { Image(systemName: "rectangle.inset.filled")
-            .foregroundStyle(.primary)
-            .footerHitArea()
-        }
+        } label: { FooterIcon(systemName: "rectangle.inset.filled") }
         .help(session.selection == nil ? "Add layer mask (Option-click for a black mask)"
               : "Add layer mask revealing the selection (Option-click to hide it)")
         .accessibilityLabel("Add layer mask")
