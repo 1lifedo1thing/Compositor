@@ -11,13 +11,18 @@ struct CommandPaletteEntry: Identifiable {
     let shortcut: String?
     /// False when its menu item is disabled right now: listed, greyed, and never run.
     let isEnabled: Bool
+    /// A toggle that's on now (Snap To › Layers, Show Grid), checked as its menu item is, so it's clear choosing it
+    /// turns it off.
+    let isOn: Bool
     let perform: @MainActor () -> Void
 
-    init(id: String, title: String? = nil, shortcut: String?, isEnabled: Bool, perform: @escaping @MainActor () -> Void) {
+    init(id: String, title: String? = nil, shortcut: String?, isEnabled: Bool, isOn: Bool = false,
+         perform: @escaping @MainActor () -> Void) {
         self.id = id
         self.title = title ?? id
         self.shortcut = shortcut
         self.isEnabled = isEnabled
+        self.isOn = isOn
         self.perform = perform
     }
 }
@@ -128,7 +133,7 @@ enum CommandPaletteMenu {
             seen[title] = count + 1
             result.append(CommandPaletteEntry(
                 id: count == 0 ? title : "\(title) (\(count + 1))", title: title,
-                shortcut: shortcut(of: item), isEnabled: item.isEnabled,
+                shortcut: shortcut(of: item), isEnabled: item.isEnabled, isOn: item.state == .on,
                 // Found again by its path when run, so a menu SwiftUI has rebuilt since the palette opened still works.
                 perform: { [weak root] in
                     guard let root, let (menu, position) = locate(titles, occurrence: occurrence, in: root) else { NSSound.beep(); return }

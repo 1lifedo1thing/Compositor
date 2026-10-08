@@ -50,7 +50,10 @@ struct CommandPaletteView: View {
     }
 
     private func row(_ entry: CommandPaletteEntry, chosen: Bool) -> some View {
-        HStack {
+        HStack(spacing: 6) {
+            // A checkmark where the menu shows one, in a column of its own so the titles line up.
+            Image(systemName: "checkmark").font(.caption.weight(.semibold))
+                .opacity(entry.isOn ? 1 : 0).frame(width: 12)
             Text(entry.title).lineLimit(1)
             Spacer()
             if let shortcut = entry.shortcut { Text(shortcut).font(.callout.monospaced()).foregroundStyle(.secondary) }

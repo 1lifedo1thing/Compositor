@@ -179,11 +179,11 @@ final class EditorSession {
     @ObservationIgnored var distortEffectsCache: [UUID: DistortEffectsCache] = [:]
     /// Document positions a move has just snapped to, drawn as guides while it lasts.
     @ObservationIgnored var snapGuides: (xs: [CGFloat], ys: [CGFloat]) = ([], [])
-    var snappingEnabled = true {
-        didSet {
-            if !snappingEnabled { snapGuides = ([], []) }
-            refreshCanvasPreview?()
-        }
+    /// Crop, resize and selection moves follow View › Snap (⇧⌘;) too: they had a Snap item of their own, which left
+    /// the View menu with two called Snap.
+    var snappingEnabled: Bool {
+        get { snapEnabled }
+        set { snapEnabled = newValue }
     }
     /// Where the last brush stroke ended, so a Shift-click paints a straight line on from it.
     @ObservationIgnored var lastBrushPoint: (point: CGPoint, layerID: UUID, mask: Bool)?
@@ -301,7 +301,13 @@ final class EditorSession {
     var showsGuides = ToolDefaults.bool("guides", true) { didSet { ToolDefaults.set(showsGuides, "guides") } }
     var showsRulers = ToolDefaults.bool("rulers", false) { didSet { ToolDefaults.set(showsRulers, "rulers") } }
     /// Master snap switch (View > Snap). On so today's layer/canvas snap keeps working.
-    var snapEnabled = ToolDefaults.bool("snap", true) { didSet { ToolDefaults.set(snapEnabled, "snap") } }
+    var snapEnabled = ToolDefaults.bool("snap", true) {
+        didSet {
+            ToolDefaults.set(snapEnabled, "snap")
+            if !snapEnabled { snapGuides = ([], []) }
+            refreshCanvasPreview?()
+        }
+    }
     var snapToGuides = ToolDefaults.bool("snapGuides", true) { didSet { ToolDefaults.set(snapToGuides, "snapGuides") } }
     var snapToGrid = ToolDefaults.bool("snapGrid", false) { didSet { ToolDefaults.set(snapToGrid, "snapGrid") } }
     var snapToLayers = ToolDefaults.bool("snapLayers", true) { didSet { ToolDefaults.set(snapToLayers, "snapLayers") } }

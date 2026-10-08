@@ -69,8 +69,9 @@ struct CommandPaletteTests {
         let before = try #require(gridState())
         grid.perform()
         try await Task.sleep(for: .milliseconds(300))
-        _ = entries() // Reading the menu again refreshes it, as opening the palette does.
+        let after = entries() // Reading the menu again refreshes it, as opening the palette does.
         #expect(gridState() != before, "the toggle's SwiftUI binding flipped")
+        #expect(after.first { $0.title == grid.title }?.isOn != grid.isOn, "and the palette's checkmark follows it")
         grid.perform() // Put it back.
         try await Task.sleep(for: .milliseconds(300))
     }
