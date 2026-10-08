@@ -64,9 +64,9 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [updater] in updater.startUpdater() }
     }
 
-    /// Black over the whole screen just behind the window in Canvas Only, so the window's rounded corners show black
-    /// rather than whatever is behind them.
-    private var canvasOnlyBackdrop: NSWindow?
+    /// Black over everything but the window's inside in Canvas Only: the screen around it, its rounded corners and the
+    /// faint rim macOS draws along a window's edge, which no setting takes away.
+    private var canvasOnlyFrame: NSWindow?
     /// The window as it was before Canvas Only (F) took the whole screen, to put it back exactly.
     private var windowBeforeCanvasOnly: (frame: NSRect, transparentTitlebar: Bool, titleVisibility: NSWindow.TitleVisibility,
                                          fullSizeContent: Bool, presentation: NSApplication.PresentationOptions)?
@@ -90,14 +90,19 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
                 window.titleVisibility = .hidden
                 buttons.forEach { window.standardWindowButton($0)?.isHidden = true }
                 window.setFrame(screen.frame, display: true, animate: false)
-                let backdrop = canvasOnlyBackdrop ?? NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-                backdrop.backgroundColor = .black
-                backdrop.isReleasedWhenClosed = false
-                backdrop.ignoresMouseEvents = true
-                backdrop.hasShadow = false
-                backdrop.setFrame(screen.frame, display: false)
-                backdrop.order(.below, relativeTo: window.windowNumber)
-                canvasOnlyBackdrop = backdrop
+                // Over the window, moving with it, letting every click through to the canvas.
+                let frame = canvasOnlyFrame ?? NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                frame.isOpaque = false
+                frame.backgroundColor = .clear
+                frame.isReleasedWhenClosed = false
+                frame.ignoresMouseEvents = true
+                frame.hasShadow = false
+                frame.setFrame(screen.frame, display: false)
+                // The window may stop short of the screen's top, kept clear of the menu bar it hides.
+                let inside = window.frame.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY).insetBy(dx: 2, dy: 2)
+                frame.contentView = CanvasOnlyFrameView(inside: inside)
+                window.addChildWindow(frame, ordered: .above)
+                canvasOnlyFrame = frame
             }
             session.canvasOnly = true
         } else {
@@ -112,7 +117,10 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
                 buttons.forEach { window.standardWindowButton($0)?.isHidden = false }
                 window.toolbar?.isVisible = true
                 window.setFrame(before.frame, display: true, animate: false)
-                canvasOnlyBackdrop?.orderOut(nil)
+                if let frame = canvasOnlyFrame {
+                    window.removeChildWindow(frame)
+                    frame.orderOut(nil)
+                }
                 windowBeforeCanvasOnly = nil
             } else {
                 window.toolbar?.isVisible = true
@@ -180,5 +188,24 @@ final class CompositorApplicationDelegate: NSObject, NSApplicationDelegate {
         guard !workspace.isManaging else { return .terminateCancel }
         Task { sender.reply(toApplicationShouldTerminate: await workspace.confirmQuit()) }
         return .terminateLater
+    }
+}
+
+/// Canvas Only's black surround: everything black but `inside`, the window's interior with its corners rounded off.
+private final class CanvasOnlyFrameView: NSView {
+    private let inside: NSRect
+    init(inside: NSRect) {
+        self.inside = inside
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.black.setFill()
+        let path = NSBezierPath(rect: bounds)
+        // Rounder than the window's own corners, so the black reaches into them: past a window's rounded corner
+        // there is nothing, and the screen behind showed through.
+        path.append(NSBezierPath(roundedRect: inside, xRadius: 26, yRadius: 26))
+        path.windingRule = .evenOdd
+        path.fill()
     }
 }

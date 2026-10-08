@@ -51,9 +51,10 @@ struct CommandPaletteView: View {
 
     private func row(_ entry: CommandPaletteEntry, chosen: Bool) -> some View {
         HStack(spacing: 6) {
-            // A checkmark where the menu shows one, in a column of its own so the titles line up.
-            Image(systemName: "checkmark").font(.caption.weight(.semibold))
-                .opacity(entry.isOn ? 1 : 0).frame(width: 12)
+            // A checkmark where the menu shows one; other rows start at the edge rather than keeping room for it.
+            if entry.isOn {
+                Image(systemName: "checkmark").font(.caption.weight(.semibold)).frame(width: 12)
+            }
             Text(entry.title).lineLimit(1)
             Spacer()
             if let shortcut = entry.shortcut { Text(shortcut).font(.callout.monospaced()).foregroundStyle(.secondary) }
@@ -91,11 +92,11 @@ final class CommandPaletteController {
                                                              close: { [weak self] in self?.close() }))
         // The panel keeps the size given below rather than growing to what SwiftUI would like.
         host.sizingOptions = []
-        host.frame = NSRect(x: 0, y: 0, width: 560, height: 290)
+        host.frame = NSRect(x: 0, y: 0, width: 410, height: 290)
         panel.contentView = host
-        panel.setContentSize(NSSize(width: 560, height: 290))
+        panel.setContentSize(NSSize(width: 410, height: 290))
         if let frame = window?.frame {
-            panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 145))
+            panel.setFrameOrigin(NSPoint(x: frame.midX - 205, y: frame.midY - 145))
         } else {
             panel.center()
         }
