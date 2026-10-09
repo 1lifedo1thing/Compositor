@@ -48,12 +48,6 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     static let exposureRange: ClosedRange<Double> = -5...5
     static let toneRange: ClosedRange<Double> = -100...100
     static let unitRange: ClosedRange<Double> = 0...100
-    /// Share of a full warm/cool swing applied to red and blue. Kept here so the eyedropper inverts the same gains the kernel multiplies.
-    static let temperatureGain = 0.35
-    /// Magenta/green swing shared by red and blue.
-    static let tintRedBlue = 0.15
-    /// Magenta/green swing on green, opposite the other two channels.
-    static let tintGreen = 0.30
 
     var whiteBalance: CameraRawWhiteBalance = .custom
     /// Relative cool-to-warm, −100…100. Positive is warmer.
@@ -207,15 +201,6 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
     /// Camera Raw's 0…100 size, in the pixel scale `adjust_grain` already uses.
     var grainKernelSize: Double { 0.5 + (grainSize / 100) * 19.5 }
 
-    /// Channel multipliers for `temperature` and `tint`. Neutral is 1, 1, 1.
-    var gains: (red: Double, green: Double, blue: Double) {
-        let warm = temperature / 100
-        let magenta = tint / 100
-        return (1 + Self.temperatureGain * warm + Self.tintRedBlue * magenta,
-                1 - Self.tintGreen * magenta,
-                1 - Self.temperatureGain * warm + Self.tintRedBlue * magenta)
-    }
-
     /// `clipping` draws the Option-drag overlay instead of the grade. Nil renders the image.
     /// `scale` is preview pixels per layer pixel. Grain uses `seed` so the pattern stays put while the panel is open.
     func apply(_ image: CGImage, clipping: CameraRawClipping? = nil, scale: CGFloat = 1, seed: UInt32 = 0, visualizePointColor: Int = -1,
@@ -223,7 +208,6 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         let settings = normalized
         if settings.isIdentity && clipping == nil && visualizePointColor < 0 && !sharpenMask { return image }
         guard settings.isValid else { throw ProjectError.invalid }
-        let gains = settings.gains
         let mode = clipping?.rawValue ?? 0
         let pixelScale = scale > 0 ? Double(scale) : 1
         let paintColor = clipping == nil && !sharpenMask
@@ -239,9 +223,10 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 settings.applyCalibration(pixels: pixels, width: width, height: height, stride: stride)
             }
             if settings.adjustsLight || settings.adjustsColor || clipping != nil {
-                adjust_camera_raw(pixels, width, height, stride, gains.red, gains.green, gains.blue,
-                                  settings.exposure, settings.contrast, settings.highlights, settings.shadows,
-                                  settings.whites, settings.blacks, settings.vibrance, settings.saturation, mode)
+                let stages = CameraRawTables.stages(for: settings)
+                let before = CameraRawTables.compose(stages.before), after = CameraRawTables.compose(stages.after)
+                adjust_camera_raw(pixels, width, height, stride, before, after, Int32(CameraRawTables.grid),
+                                  settings.highlights, settings.shadows, mode)
             }
             if paintColor { settings.applyCurveColor(pixels, width: width, height: height, stride: stride, visualize: visualizePointColor) }
             if paintEffects {
@@ -266,32 +251,20 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
         }
     }
 
-    /// Temperature and tint that bring one linear-light pixel to neutral, using the same gains `apply` multiplies.
-    /// Nil when a channel is missing or the cast cannot be expressed as those two axes.
-    static func neutralize(linearRed red: Double, green: Double, blue: Double) -> (temperature: Double, tint: Double)? {
-        guard red > 1e-4, green > 1e-4, blue > 1e-4 else { return nil }
-        let a1 = Self.temperatureGain * red
-        let b1 = Self.tintRedBlue * red + Self.tintGreen * green
-        let c1 = green - red
-        let a2 = -Self.temperatureGain * blue
-        let b2 = Self.tintRedBlue * blue + Self.tintGreen * green
-        let c2 = green - blue
-        let determinant = a1 * b2 - a2 * b1
-        guard abs(determinant) > 1e-8 else { return nil }
-        let warm = (c1 * b2 - c2 * b1) / determinant
-        let magenta = (a1 * c2 - a2 * c1) / determinant
-        guard warm.isFinite, magenta.isFinite else { return nil }
-        return (warm * 100, magenta * 100)
-    }
-
+    /// Temperature and tint that turn one straight sRGB color (0…1) as nearly gray as Camera Raw's white balance can.
+    /// Nil when a channel is missing.
     static func neutralize(straightRed red: Double, green: Double, blue: Double) -> (temperature: Double, tint: Double)? {
-        neutralize(linearRed: decode(red), green: decode(green), blue: decode(blue))
+        CameraRawTables.neutralize(red: red, green: green, blue: blue)
     }
 
     /// Gray-world balance of the opaque pixels. Nil when the image has no coverage or no solution.
     static func autoBalance(of image: CGImage) -> (temperature: Double, tint: Double)? {
         guard let average = averageLinear(image) else { return nil }
-        return neutralize(linearRed: average.red, green: average.green, blue: average.blue)
+        return neutralize(straightRed: encode(average.red), green: encode(average.green), blue: encode(average.blue))
+    }
+
+    private static func encode(_ linear: Double) -> Double {
+        linear <= 0.0031308 ? linear * 12.92 : 1.055 * pow(linear, 1 / 2.4) - 0.055
     }
 
     private static func decode(_ encoded: Double) -> Double {

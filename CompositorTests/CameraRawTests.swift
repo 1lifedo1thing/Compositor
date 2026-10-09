@@ -50,12 +50,13 @@ struct CameraRawTests {
         #expect(!FilterKind.cameraRaw.isImageAdjustment)
     }
 
-    @Test func exposureAddsOneStopAndContrastPivotsAroundMidGray() throws {
+    /// Exposure and Contrast as Photoshop's Camera Raw Filter draws them: the numbers are its own, measured.
+    @Test func exposureAndContrastMatchPhotoshop() throws {
         let input = try gray()
         var settings = CameraRawSettings()
         settings.exposure = 1
         let brighter = try pixels(settings.apply(input))[0]
-        #expect(abs(brighter[0] - 176) <= 2, "+1 stop: \(brighter)")
+        #expect(abs(brighter[0] - 181) <= 2, "+1 stop: \(brighter)")
         #expect(brighter[0] == brighter[1] && brighter[1] == brighter[2])
         let translucent = try gray(alpha: 0.5)
         #expect(try pixels(settings.apply(translucent))[0][3] == pixels(translucent)[0][3])
@@ -69,10 +70,10 @@ struct CameraRawTests {
         settings = CameraRawSettings()
         settings.contrast = 100
         let pushed = try pixels(settings.apply(pair))
-        #expect(pushed[0][0] < 10 && pushed[1][0] > 250, "contrast +100 drives the pair apart: \(pushed)")
+        #expect(abs(pushed[0][0] - 36) <= 3 && abs(pushed[1][0] - 213) <= 3, "contrast +100 drives the pair apart: \(pushed)")
         settings.contrast = -100
         let flat = try pixels(settings.apply(pair))
-        #expect(abs(flat[0][0] - 128) <= 2 && abs(flat[1][0] - 128) <= 2, "contrast −100 meets at mid gray: \(flat)")
+        #expect(abs(flat[0][0] - 88) <= 3 && abs(flat[1][0] - 174) <= 3, "contrast −100 draws them together: \(flat)")
     }
 
     @Test func tonalSlidersMoveTheEndTheyName() throws {
@@ -92,7 +93,7 @@ struct CameraRawTests {
         settings.whites = 100
         let clipped = try pixels(settings.apply(brightAndMid))
         #expect(clipped[0][0] == 255, "whites +100 clips the bright tone: \(clipped[0])")
-        #expect(abs(clipped[1][0] - 128) <= 2, "not the midtone: \(clipped[1])")
+        #expect(clipped[1][0] > 128, "and lifts the midtone with it, as in Photoshop: \(clipped[1])")
         let viz = try pixels(settings.apply(brightAndMid, clipping: .highlights))
         #expect(viz[0] == [255, 255, 255, 255] && viz[1] == [0, 0, 0, 255], "highlight clipping is not the grade: \(viz)")
 
@@ -111,8 +112,8 @@ struct CameraRawTests {
         settings = CameraRawSettings()
         settings.blacks = -100
         let crushed = try pixels(settings.apply(darkAndMid))
-        #expect(crushed[0][0] < 20, "blacks −100 crushes the dark tone: \(crushed[0])")
-        #expect(abs(crushed[1][0] - 128) <= 2)
+        #expect(crushed[0][0] == 0, "blacks −100 crushes the dark tone: \(crushed[0])")
+        #expect(abs(crushed[1][0] - 91) <= 3, "and darkens the midtone, as in Photoshop: \(crushed[1])")
         let shadowViz = try pixels(settings.apply(darkAndMid, clipping: .shadows))
         #expect(shadowViz[0] == [0, 0, 0, 255] && shadowViz[1] == [255, 255, 255, 255], "shadow clipping is not the grade: \(shadowViz)")
     }
@@ -127,6 +128,31 @@ struct CameraRawTests {
         settings.tint = 100
         let magenta = try pixels(settings.apply(input))[0]
         #expect(magenta[1] < 128 && magenta[1] < magenta[0] && magenta[1] < magenta[2], "magenta lowers green: \(magenta)")
+    }
+
+    /// Temperature, Tint and Vibrance as Photoshop's Camera Raw Filter draws them, its own measured numbers. They were
+    /// once a few percent either way, a fraction of Photoshop's strength (issue #252).
+    @Test func whiteBalanceAndVibranceMatchPhotoshop() throws {
+        func applied(_ red: Int, _ green: Int, _ blue: Int, _ adjust: (inout CameraRawSettings) -> Void) throws -> [Int] {
+            var settings = CameraRawSettings()
+            adjust(&settings)
+            return Array(try pixels(settings.apply(image(red: CGFloat(red) / 255, green: CGFloat(green) / 255,
+                                                         blue: CGFloat(blue) / 255)))[0].prefix(3))
+        }
+        func near(_ got: [Int], _ expected: [Int]) -> Bool { zip(got, expected).allSatisfy { abs($0 - $1) <= 4 } }
+        let cases: [(String, [Int], (inout CameraRawSettings) -> Void, [Int])] = [
+            ("temperature +100", [128, 128, 128], { $0.temperature = 100 }, [235, 189, 117]),
+            ("temperature −50", [128, 128, 128], { $0.temperature = -50 }, [102, 146, 210]),
+            ("tint +100", [128, 128, 128], { $0.tint = 100 }, [159, 125, 215]),
+            ("tint −100", [128, 128, 128], { $0.tint = -100 }, [98, 198, 120]),
+            ("vibrance +100 spares skin", [153, 107, 107], { $0.vibrance = 100 }, [167, 98, 98]),
+            ("vibrance +100 fills a dull cyan", [107, 153, 153], { $0.vibrance = 100 }, [0, 160, 160]),
+            ("vibrance −100", [92, 92, 230], { $0.vibrance = -100 }, [164, 164, 210]),
+        ]
+        for (name, input, adjust, expected) in cases {
+            let got = try applied(input[0], input[1], input[2], adjust)
+            #expect(near(got, expected), "\(name): \(got), Photoshop \(expected)")
+        }
     }
 
     @Test func vibranceFavorsDullColorsAndProtectsSkinWhileSaturationDoesNot() throws {
@@ -155,7 +181,8 @@ struct CameraRawTests {
         let blueAfter = try chroma(pixels(settings.apply(blue))[0])
         let redRatio = Double(redAfter) / Double(redBefore)
         let blueRatio = Double(blueAfter) / Double(blueBefore)
-        #expect(abs(redRatio - 2) < 0.15 && abs(blueRatio - 2) < 0.15, "saturation doubles both: \(redRatio), \(blueRatio)")
+        // Photoshop doubles chroma in linear light, which is a little less in sRGB values, and less again for blue.
+        #expect(abs(redRatio - 1.85) < 0.15 && abs(blueRatio - 1.73) < 0.15, "saturation raises both: \(redRatio), \(blueRatio)")
     }
 
     @Test func eyedropperAndAutoNeutralizeAWarmPixel() throws {
@@ -280,7 +307,7 @@ struct CameraRawTests {
         await session.commitFilter()
         #expect(session.history.undoCount == count + 1 && session.history.undoName == "Camera Raw Filter")
         let baked = try pixels(try #require(session.activeLayer?.asset?.image))[0]
-        #expect(abs(baked[0] - 176) <= 2, "OK bakes the grade: \(baked)")
+        #expect(abs(baked[0] - 181) <= 2, "OK bakes the grade: \(baked)")
     }
 
     /// OK stores the grade the eye left in the layer. A hidden slider must not come back on the next open.
