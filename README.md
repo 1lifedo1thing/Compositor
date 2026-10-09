@@ -85,6 +85,10 @@ brew install --cask robbietilton-compositor
 - macOS 26.0 or later on a Mac with Apple silicon
 - Xcode 26 or later (to build from source)
 
+## Translations
+
+Compositor is English only for now, and translation pull requests aren't being accepted. It's maintained by one person, every new string would need translating from then on, and translations in languages I don't read can't be reviewed. I'll revisit this once the app settles; until then, please don't open localization PRs.
+
 ## Building
 
 Open `Compositor.xcodeproj` and run the **Compositor** scheme.
