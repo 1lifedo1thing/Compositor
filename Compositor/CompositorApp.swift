@@ -80,10 +80,13 @@ struct CompositorApp: App {
                     Button("Export PNG…") { Task { await applicationDelegate.projects.exportPNG() } }
                         .configuredKeyboardShortcut("e", modifiers: [.command, .shift])
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
-                    Button("Export JPEG…") { Task { await applicationDelegate.projects.exportJPEG() } }
+                    // Export As on JPEG.
+                    Button("Export JPEG…") { Task { await applicationDelegate.projects.exportAs(start: .jpeg) } }
                         .configuredKeyboardShortcut("s", modifiers: [.command, .option, .shift])
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
-                    Button("Export PDF…") { Task { await applicationDelegate.projects.exportPDF() } }
+                    // PNG, JPEG or PDF, sized and previewed; ⌥⇧⌘W, as Photoshop's Export As.
+                    Button("Export As…") { Task { await applicationDelegate.projects.exportAs() } }
+                        .configuredKeyboardShortcut("w", modifiers: [.command, .option, .shift])
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
                     Divider()
                     Button("Close Project") {
@@ -109,7 +112,7 @@ struct CompositorApp: App {
                             .keyboardShortcut("f", modifiers: [])
                             .disabled(!session.canToggleCanvasOnly)
                         Divider()
-                        // With a dialog's preview open (Export JPEG), these zoom that preview rather than the canvas.
+                        // With a dialog's preview open (Export As), these zoom that preview rather than the canvas.
                         Button("Fit Canvas") {
                             if let preview = session.previewZoom { preview(.fit) } else { session.fit() }
                         }.configuredKeyboardShortcut("0").disabled(session.document == nil)
