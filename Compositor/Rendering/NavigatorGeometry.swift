@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// Where the whole document sits in the Navigator's box (fitted, centred, its proportions kept), and the
+/// Where the whole document sits in the Navigator's box (fitted, centered, its proportions kept), and the
 /// conversions between that picture and document pixels.
 struct NavigatorGeometry: Equatable {
     let documentSize: CGSize

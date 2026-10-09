@@ -4,8 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     /// The Layers panel's width, remembered across launches.
     @AppStorage("layersPanelWidth") private var layersPanelWidth = 252.0
-    @AppStorage("navigator.visible") private var showsNavigator = true
-    @State private var navigatorColumnHeight = Double.infinity
+    @AppStorage("navigator.visible") private var showsNavigator = false
     @Bindable var session: EditorSession
     var applicationDelegate: CompositorApplicationDelegate? = nil
     @Environment(\.openWindow) private var openWindow
@@ -108,21 +107,18 @@ struct ContentView: View {
                                     .padding(.bottom, 14)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                             }
+                            if showsNavigator, !session.canvasOnly, session.viewport.zoom >= NavigatorMinimap.zoomShown {
+                                NavigatorMinimap(session: session)
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            }
                         }
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("editor")) } action: { canvasFrame = $0 }
                     }
                 }
                 if !session.canvasOnly {
                     PanelResizeEdge(width: $layersPanelWidth, range: LayersPanel.widths)
-                    VStack(spacing: 0) {
-                        if showsNavigator {
-                            NavigatorPanel(session: session, columnHeight: navigatorColumnHeight)
-                            Divider()
-                        }
-                        LayersPanel(session: session, width: layersPanelWidth)
-                    }
-                    .frame(width: layersPanelWidth)
-                    .onGeometryChange(for: Double.self) { $0.size.height } action: { navigatorColumnHeight = $0 }
+                    LayersPanel(session: session, width: layersPanelWidth)
                 }
             }
             if !session.canvasOnly {

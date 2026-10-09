@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct NavigatorTests {
-    @Test func documentFitsTheBoxCentred() {
+    @Test func documentFitsTheBoxCentered() {
         let geometry = NavigatorGeometry(documentSize: CGSize(width: 400, height: 200), box: CGSize(width: 200, height: 200))
         #expect(geometry.imageRect == CGRect(x: 0, y: 50, width: 200, height: 100))
         #expect(geometry.thumbnailRect(for: CGRect(x: 100, y: 50, width: 200, height: 100)) == CGRect(x: 50, y: 75, width: 100, height: 50))
@@ -31,7 +31,7 @@ struct NavigatorTests {
         #expect(abs(visible.midX - 200) < 0.001 && abs(visible.midY - 150) < 0.001)
     }
 
-    @Test func centringKeepsZoomAndStopsFollowingFit() {
+    @Test func centeringKeepsZoomAndStopsFollowingFit() {
         let size = CGSize(width: 400, height: 300)
         var viewport = viewport() // still following Fit, at the fitted zoom (1.68)
         let zoom = viewport.zoom
@@ -82,23 +82,11 @@ struct NavigatorTests {
         #expect(picture.width == 40 && picture.height == 30)
     }
 
-    @Test func heightStaysInRangeAndSliderIsLogarithmic() {
-        #expect(NavigatorPanel.clampedHeight(20) == 90 && NavigatorPanel.clampedHeight(999) == 420)
-        #expect(NavigatorPanel.clampedHeight(200) == 200)
-        #expect(abs(NavigatorPanel.zoom(forSlider: NavigatorPanel.slider(forZoom: 0.25)) - 0.25) < 0.0001)
-        #expect(abs(NavigatorPanel.slider(forZoom: 2) - 1) < 0.0001, "the slider moves in doublings: 2× is one step past 100%")
-        #expect(NavigatorPanel.zoom(forSlider: -100) == 0.01 && NavigatorPanel.zoom(forSlider: 100) == 32)
-    }
-
-    @Test func panelLaysOutWithAndWithoutADocument() {
-        let session = EditorSession()
-        // Its own defaults, so what the person set in the app (collapsed, say) can't change the result.
-        let defaults = UserDefaults(suiteName: "NavigatorTests-\(UUID().uuidString)")!
-        let empty = NSHostingView(rootView: NavigatorPanel(session: session).frame(width: 252).defaultAppStorage(defaults))
-        #expect(empty.fittingSize.width == 252)
-        session.createDocument(width: 400, height: 300)
-        let full = NSHostingView(rootView: NavigatorPanel(session: session).frame(width: 252).defaultAppStorage(defaults))
-        #expect(full.fittingSize.height > 160, "the header, the 160 pt picture and the zoom row")
+    /// The minimap fits the document inside its largest size, its proportions kept.
+    @Test func minimapFitsTheDocument() {
+        #expect(NavigatorMinimap.size(for: CGSize(width: 4000, height: 3000)) == CGSize(width: 120, height: 90))
+        #expect(NavigatorMinimap.size(for: CGSize(width: 6000, height: 2000)) == CGSize(width: 126, height: 42))
+        #expect(NavigatorMinimap.size(for: .zero) == .zero)
     }
 
     /// Past the largest surface Compositor allocates (200 megapixels). Drawn at full size, the Invert surface can't be
@@ -135,19 +123,11 @@ struct NavigatorTests {
 
     @Test func selectionChangesDoNotRedrawThePicture() throws {
         var document = CanvasDocument(width: 100, height: 100, layers: [ImageLayer(asset: try paint(10, 10), origin: .zero)])
-        let key = NavigatorPanel.RenderKey(document: document, revision: 0, expanded: true)
+        let key = NavigatorMinimap.RenderKey(document: document, revision: 0)
         document.selection = DocumentSelection(path: CGPath(rect: CGRect(x: 0, y: 0, width: 5, height: 5), transform: nil),
                                                antialiased: true, feather: 0)
-        #expect(NavigatorPanel.RenderKey(document: document, revision: 0, expanded: true) == key)
+        #expect(NavigatorMinimap.RenderKey(document: document, revision: 0) == key)
         document.layers[0].isVisible = false
-        #expect(NavigatorPanel.RenderKey(document: document, revision: 0, expanded: true) != key)
-    }
-
-    /// The picture gives way so the Layers panel keeps its room, however short the window.
-    @Test func pictureLeavesRoomForLayers() {
-        #expect(NavigatorPanel.pictureHeight(160, column: .infinity) == 160)
-        #expect(NavigatorPanel.pictureHeight(420, column: 500) == 500 - NavigatorPanel.reservedHeight)
-        #expect(NavigatorPanel.pictureHeight(300, column: 200) == 90, "never smaller than the shortest height")
-        #expect(NavigatorPanel.pictureHeight(999, column: .infinity) == 420)
+        #expect(NavigatorMinimap.RenderKey(document: document, revision: 0) != key)
     }
 }
