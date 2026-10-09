@@ -245,6 +245,7 @@ struct JPEGPreview: View {
                     // Nearest-neighbor from 100% up, so each pixel of the JPEG and its artifacts shows as it is.
                     Image(decorative: image, scale: 1).resizable().interpolation(zoom >= 1 ? .none : .high)
                         .frame(width: size.width, height: size.height)
+                        .background { Self.checkerboard }
                         .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
                 }
                 .scrollIndicators(.visible)
@@ -263,12 +264,27 @@ struct JPEGPreview: View {
                 .pointerStyle(dragStart == nil ? .grabIdle : .grabActive)
             } else {
                 Image(decorative: image, scale: 1).resizable().interpolation(.high).scaledToFit()
+                    .background { Self.checkerboard }
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { self.zoom = 1 }
             }
         }
     }
+
+    /// The canvas's checkerboard behind the image, 10-point squares of two grays, so a transparent PNG shows where its
+    /// edges are and what's see-through. A small tile repeated, however far the preview is zoomed.
+    private static let checkerboard: some View = Image(nsImage: {
+        let tile = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+            NSColor(white: 0.30, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: 20, height: 20).fill()
+            NSColor(white: 0.35, alpha: 1).setFill()
+            NSRect(x: 0, y: 10, width: 10, height: 10).fill()
+            NSRect(x: 10, y: 0, width: 10, height: 10).fill()
+            return true
+        }
+        return tile
+    }()).resizable(resizingMode: .tile)
 
     /// The image's size on screen at `zoom`, in points.
     private func shownSize(_ zoom: Double) -> CGSize {
