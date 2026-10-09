@@ -299,7 +299,10 @@ void dither_glow(uint8_t *rgba, const uint8_t *glow, size_t width, size_t height
             for (size_t x = 0; x < width * 4; x += 4) {
                 float a = row[x + 3];
                 for (int c = 0; c < 3; ++c) {
-                    float v = (float)row[x + c] + (float)light[x + c] * amount * a / 255.0f;
+                    // The light eases in as the pixel nears full brightness rather than clipping there, so where the
+                    // picture is bright the gaps between lines glow without filling up to the lines.
+                    float v = row[x + c], added = (float)light[x + c] * amount * a / 255.0f, room = (a - v) * 0.7f;
+                    if (room > 0) v += room * (1 - expf(-added / room));
                     row[x + c] = (uint8_t)lroundf(v > a ? a : v);
                 }
             }
@@ -388,7 +391,7 @@ static int draw_lines(uint8_t *rgba, size_t width, size_t height, size_t stride,
     free(spread);
 
     float middle = (float)spacing / 2, dots = clamp01(p->dots), threshold = clamp01(p->threshold), displace = p->displace;
-    float thickness = clamp01(p->thickness);
+    float thickness = clamp01(p->thickness), blackLevel = clamp01(p->blackLevel);
     int rising = displace >= 0;
     float dark[3] = { p->dark[0] / 255.0f, p->dark[1] / 255.0f, p->dark[2] / 255.0f };
     float light[3] = { p->light[0] / 255.0f, p->light[1] / 255.0f, p->light[2] / 255.0f };
@@ -419,10 +422,12 @@ static int draw_lines(uint8_t *rgba, size_t width, size_t height, size_t stride,
                 float base = (float)line * (float)spacing + middle;
                 float here = base - displace * lift[i], before = at > 0 ? base - displace * lift[i - 1] : here;
                 float lo = fminf(here, before), hi = fmaxf(here, before);
-                float c[3];
-                for (int k = 0; k < 3; ++k) c[k] = original ? scan[(size_t)k * plane + i] : screen[k] + (phosphor[k] - screen[k]) * t;
+                // Black Level: the line's least brightness, so it still shows where the picture is black.
+                float level = blackLevel + (1 - blackLevel) * t, c[3];
+                for (int k = 0; k < 3; ++k)
+                    c[k] = original ? blackLevel + (1 - blackLevel) * scan[(size_t)k * plane + i] : screen[k] + (phosphor[k] - screen[k]) * level;
                 // Half the line's height: thinner where the picture is dim.
-                float beam = middle * thickness * (0.29f + 0.71f * sqrtf(clamp01(t)));
+                float beam = middle * thickness * (0.29f + 0.71f * sqrtf(clamp01(level)));
                 long top = (long)floorf(rising ? lo - beam - 1 : fmaxf(lo - beam - 1, horizon - 1));
                 long bottom = (long)ceilf(rising ? fminf(hi + beam + 1, horizon + 1) : hi + beam + 1);
                 if (top < 0) top = 0;

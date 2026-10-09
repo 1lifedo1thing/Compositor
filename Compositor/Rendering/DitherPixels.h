@@ -58,6 +58,8 @@ typedef struct {
     // −1…1: darker or lighter, and flatter or punchier, before the lines are drawn.
     float density;
     float contrast;
+    // 0–1: how bright the lines are where the picture is black.
+    float blackLevel;
     // 0–1: how far the brightness is smoothed, over a few line spacings, before it displaces the lines.
     float smoothness;
     // 0: lines of `light` on `dark` (straight sRGB), brighter where the picture is. 1: lines in the picture's colors.
@@ -76,7 +78,8 @@ int dither_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, cons
 // Turns each `block` × `block` square of premultiplied RGBA pixels into a round dot in its own color on `gap` (straight
 // sRGB), like the lit pixels of a dot-matrix screen. The dot's edge is smoothed and alpha is kept.
 void dither_dots(uint8_t *rgba, size_t width, size_t height, size_t stride, int block, const uint8_t *gap);
-// Adds `glow` (premultiplied RGBA, same layout) over the pixels at `amount`, never past their own alpha.
+// Adds `glow` (premultiplied RGBA, same layout) over the pixels at `amount`, easing off as they near full brightness
+// and never past their own alpha.
 void dither_glow(uint8_t *rgba, const uint8_t *glow, size_t width, size_t height, size_t stride, float amount);
 // Rounds 16-bit premultiplied RGBA (`width` × `height`, tightly packed) to 8 bits into `rgba` (`stride` bytes per
 // row), adding noise of about one 8-bit step first so smooth gradients don't come out in steps. The noise is fixed per

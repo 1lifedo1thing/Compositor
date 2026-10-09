@@ -46,6 +46,22 @@ struct ScanlinesTests {
         return try #require(context.makeImage())
     }
 
+    /// On solid white, glow lights the gaps without filling them up to the lines; on solid black, Black Level lights them.
+    @Test func linesShowOnSolidWhiteAndBlack() throws {
+        let white = try scanlines(gray: 1, spacing: 8, glow: 100)
+        #expect(white.max()! - white.min()! > 40, "lines and gaps on white with full glow: \(white)")
+        let context = try BrushRaster.context(width: 16, height: 32, mask: false)
+        context.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 16, height: 32))
+        var settings = ScanlinesSettings()
+        settings.lineSpacing = 8
+        settings.blackLevel = 40
+        let result = try BrushRaster.copy(try settings.apply(try #require(context.makeImage())))
+        let data = try #require(result.data).assumingMemoryBound(to: UInt8.self)
+        let column = (0..<8).map { Int(data[$0 * result.bytesPerRow + 8 * 4]) }
+        #expect(column.max()! > 60 && column.min()! < 10, "lines and gaps on black: \(column)")
+    }
+
     /// Glow lights the dark screen between the lines.
     @Test func glowLightsBetweenTheLines() throws {
         let plain = try scanlines(gray: 1, spacing: 8), glowing = try scanlines(gray: 1, spacing: 8, glow: 100)

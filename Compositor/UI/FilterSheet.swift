@@ -275,6 +275,8 @@ struct FilterSheet: View {
         control("Density", \.scanlines.density, range: -100...100, unit: "", decimals: 0, logarithmic: false)
             .help("Darker or lighter before the lines are drawn")
         control("Contrast", \.scanlines.contrast, range: -100...100, unit: "", decimals: 0, logarithmic: false)
+        control("Black Level", \.scanlines.blackLevel, range: 0...100, unit: "%", decimals: 0, logarithmic: false)
+            .help("How bright the lines are where the picture is black, so they show even over black")
         Picker("Colors", selection: Binding(get: { lines.colors }, set: { new in update { $0.scanlines.colors = new } })) {
             ForEach(DitherColors.allCases, id: \.self) { Text($0.rawValue).tag($0) }
         }

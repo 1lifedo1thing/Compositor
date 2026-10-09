@@ -13,7 +13,7 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
     /// How much of the gap a full-bright line fills, 5–100%; dimmer parts draw it thinner.
     var thickness: Double = 70
     /// 0–100%: light blooming around the lines.
-    var glow: Double = 35
+    var glow: Double = 0
     /// 0–100%: tones darker than this break the lines into round dots, through dashes into the solid line above it.
     var dots: Double = 0
     /// Pixels the lines waver sideways, in a wave down the screen.
@@ -30,6 +30,8 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
     /// −100…100: darker or lighter, and flatter or punchier, before the lines are drawn.
     var density: Double = 0
     var contrast: Double = 0
+    /// 0–100%: how bright the lines are where the picture is black, as a CRT's brightness knob lifts its black.
+    var blackLevel: Double = 0
     var colors: DitherColors = .blackWhite
     var dark = AdjustmentColor(red: 0, green: 0, blue: 0)
     var light = AdjustmentColor(red: 1, green: 1, blue: 1)
@@ -38,7 +40,7 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
         var result = self
         result.lineSpacing = ImageAdjustmentPixels.clamp(lineSpacing, Self.lineSpacingRange, 4).rounded()
         result.thickness = ImageAdjustmentPixels.clamp(thickness, 5...100, 70)
-        result.glow = ImageAdjustmentPixels.clamp(glow, 0...100, 35)
+        result.glow = ImageAdjustmentPixels.clamp(glow, 0...100, 0)
         result.dots = ImageAdjustmentPixels.clamp(dots, 0...100, 0)
         result.wobble = ImageAdjustmentPixels.clamp(wobble, Self.wobbleRange, 0)
         result.displace = ImageAdjustmentPixels.clamp(displace, Self.displaceRange, 0)
@@ -47,6 +49,7 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
         result.split = ImageAdjustmentPixels.clamp(split, Self.splitRange, 0).rounded()
         result.density = ImageAdjustmentPixels.clamp(density, -100...100, 0)
         result.contrast = ImageAdjustmentPixels.clamp(contrast, -100...100, 0)
+        result.blackLevel = ImageAdjustmentPixels.clamp(blackLevel, 0...100, 0)
         result.dark = dark.clamped
         result.light = light.clamped
         return result
@@ -64,7 +67,8 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
                                          dots: Float(settings.dots / 100), wobble: Float(settings.wobble),
                                          displace: Float(settings.displace), threshold: Float(settings.threshold / 100),
                                          split: Float(settings.split), density: Float(settings.density / 100),
-                                         contrast: Float(settings.contrast / 100), smoothness: Float(settings.smoothness / 100), originalColors: settings.colors == .original ? 1 : 0,
+                                         contrast: Float(settings.contrast / 100), blackLevel: Float(settings.blackLevel / 100),
+                                         smoothness: Float(settings.smoothness / 100), originalColors: settings.colors == .original ? 1 : 0,
                                          dark: dark, light: light)
             failed = scanlines_apply(pixels, width, height, stride, &params) == 0
         }
