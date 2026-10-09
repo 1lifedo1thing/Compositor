@@ -52,14 +52,17 @@ struct ScanlinesTests {
         #expect(glowing[0] > plain[0] + 40, "between the lines: \(plain[0]) without glow, \(glowing[0]) with")
     }
 
-    /// Dots break each line into beads: along a lit line's middle, dark gaps come every line spacing.
-    @Test func dotsBreakTheLinesIntoBeads() throws {
-        let white = try flat(64, 16) { $0.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)); $0.fill(CGRect(x: 0, y: 0, width: 64, height: 16)) }
-        let solid = try render(white) { $0.lineSpacing = 8 }, beads = try render(white) { $0.lineSpacing = 8; $0.dots = 100 }
+    /// Dots break the lines into beads where the picture is darker than the Dots level: along a gray line's middle, dark
+    /// gaps come every line spacing, while a white line above the level stays solid.
+    @Test func dotsBeadTheLinesBelowTheirLevel() throws {
+        func filled(_ gray: CGFloat) throws -> CGImage {
+            try flat(64, 16) { $0.setFillColor(CGColor(srgbRed: gray, green: gray, blue: gray, alpha: 1)); $0.fill(CGRect(x: 0, y: 0, width: 64, height: 16)) }
+        }
         let middle = { (r: (data: UnsafeMutablePointer<UInt8>, row: Int, context: CGContext)) in (0..<64).map { Int(r.data[4 * r.row + $0 * 4]) } }
-        #expect(middle(solid).allSatisfy { $0 == 255 })
-        let lit = middle(beads)
-        #expect(lit[3] == 255 && lit[4] == 255 && lit[0] < 60 && lit[8] < 60, "beads every 8 pixels: \(lit)")
+        let white = middle(try render(try filled(1)) { $0.lineSpacing = 8; $0.dots = 70 })
+        #expect(white.allSatisfy { $0 == 255 }, "white stays a solid line: \(white)")
+        let gray = middle(try render(try filled(0.4)) { $0.lineSpacing = 8; $0.dots = 70 })
+        #expect(gray[3] > 100 && gray[4] > 100 && gray[0] < 40 && gray[8] < 40, "beads every 8 pixels: \(gray)")
     }
 
     /// Wobble pushes lines sideways by different amounts: a vertical edge no longer lines up from line to line.
@@ -94,6 +97,26 @@ struct ScanlinesTests {
             return row
         }
         #expect(brightest(column: 48) < 24, "the line over white rises above the line's own middle")
+    }
+
+    /// Displace: a line lifted over a bright band hides the line behind it, which still shows where nothing is in front.
+    @Test func aLiftedLineHidesTheLinesBehindIt() throws {
+        let band = try flat(64, 80) { context in
+            context.setFillColor(CGColor(srgbRed: 0.25, green: 0.25, blue: 0.25, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 80))
+            context.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1))
+            // The third line's rows, 32–48, in the middle columns; centered, so either way up.
+            context.fill(CGRect(x: 16, y: 32, width: 32, height: 16))
+        }
+        let r = try render(band) { settings in
+            settings.lineSpacing = 16
+            settings.displace = 40
+            settings.smoothness = 0
+        }
+        // Over the gray the second line rises 10, to row 14; the third, over white, rises 40 to the top, in front of it.
+        #expect(r.data[14 * r.row + 4 * 4] > 20, "the second line shows where nothing is in front of it")
+        #expect(r.data[14 * r.row + 32 * 4] < 8, "the lifted line hides it")
+        #expect(r.data[2 * r.row + 32 * 4] > 200, "the lifted line is drawn")
     }
 
     /// Threshold leaves the screen dark where the picture is darker than it.

@@ -45,11 +45,11 @@ typedef struct {
     int spacing;
     // How much of the gap a full-bright line fills, 0–1; dimmer parts draw it thinner.
     float thickness;
-    // How far each line breaks into round dots, 0–1.
+    // 0–1: tones darker than this break the lines into round dots, blending through dashes into the solid line above it.
     float dots;
     // Pixels a line wavers sideways, in a wave down the screen.
     float wobble;
-    // Pixels a line rises where the picture under it is bright, so lines ripple into the picture's shapes.
+    // Pixels a line rises where the picture under it is bright (falls, if negative), so lines swell into its shapes.
     float displace;
     // 0–1: tones darker than this draw no line at all.
     float threshold;
@@ -58,6 +58,8 @@ typedef struct {
     // −1…1: darker or lighter, and flatter or punchier, before the lines are drawn.
     float density;
     float contrast;
+    // 0–1: how far the brightness is smoothed, over a few line spacings, before it displaces the lines.
+    float smoothness;
     // 0: lines of `light` on `dark` (straight sRGB), brighter where the picture is. 1: lines in the picture's colors.
     int originalColors;
     uint8_t dark[3];

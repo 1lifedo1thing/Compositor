@@ -335,6 +335,126 @@ void dither_quantize16(const uint16_t *wide, uint8_t *rgba, size_t width, size_t
     });
 }
 
+// Draws the lines over the scanned tones, a column at a time. Displaced, they're a landscape seen from the front, after
+// the Rutt-Etra video synthesizer: each line is lifted (or, displaced the other way, lowered) by the picture's
+// brightness smoothed into hills, and hides whatever lies behind it, so nearer lines wrap over the shapes rather than
+// crossing the ones beyond. Nearest line first: the bottom one when lines rise, the top one when they fall.
+static int draw_lines(uint8_t *rgba, size_t width, size_t height, size_t stride, const ScanlinesParams *p,
+                       const float *scan, const uint8_t *alpha, size_t lines, size_t spacing) {
+    int original = p->originalColors;
+    size_t plane = lines * width;
+    float *tone = malloc(plane * sizeof(float)), *lift = malloc(plane * sizeof(float)), *spread = malloc(plane * sizeof(float));
+    if (!tone || !lift || !spread) { free(tone); free(lift); free(spread); return 0; }
+    for (size_t at = 0; at < plane; ++at)
+        tone[at] = original ? 0.2126f * scan[at] + 0.7152f * scan[plane + at] + 0.0722f * scan[2 * plane + at] : scan[at];
+    // The height: brightness blurred along each line (three box passes, close to a Gaussian) and then across its
+    // neighbors, so a face rises as one rounded hill instead of a staircase of the pixels under it.
+    float smoothness = clamp01(p->smoothness);
+    long radius = lroundf(smoothness * (float)spacing * 2);
+    memcpy(lift, tone, plane * sizeof(float));
+    if (radius > 0 && p->displace != 0) {
+        __block int failed = 0;
+        in_bands(lines, ^(size_t firstLine, size_t lastLine) {
+            float *copy = malloc(width * sizeof(float));
+            if (!copy) { failed = 1; return; }
+            for (size_t line = firstLine; line < lastLine; ++line) {
+                float *row = lift + line * width;
+                for (int pass = 0; pass < 3; ++pass) {
+                    memcpy(copy, row, width * sizeof(float));
+                    float sum = 0;
+                    for (long x = -radius; x <= radius; ++x) sum += copy[x < 0 ? 0 : x >= (long)width ? width - 1 : (size_t)x];
+                    for (size_t x = 0; x < width; ++x) {
+                        row[x] = sum / (float)(2 * radius + 1);
+                        long out = (long)x - radius, in = (long)x + radius + 1;
+                        sum += copy[in >= (long)width ? width - 1 : (size_t)in] - copy[out < 0 ? 0 : (size_t)out];
+                    }
+                }
+            }
+            free(copy);
+        });
+        if (failed) { free(tone); free(lift); free(spread); return 0; }
+        long across = lroundf(smoothness * 2);
+        for (long step = 0; step < across; ++step) {
+            in_bands(lines, ^(size_t firstLine, size_t lastLine) {
+                for (size_t line = firstLine; line < lastLine; ++line) {
+                    const float *above = lift + (line ? line - 1 : 0) * width, *here = lift + line * width;
+                    const float *below = lift + (line + 1 < lines ? line + 1 : line) * width;
+                    for (size_t x = 0; x < width; ++x) spread[line * width + x] = (above[x] + 2 * here[x] + below[x]) / 4;
+                }
+            });
+            memcpy(lift, spread, plane * sizeof(float));
+        }
+    }
+    free(spread);
+
+    float middle = (float)spacing / 2, dots = clamp01(p->dots), threshold = clamp01(p->threshold), displace = p->displace;
+    float thickness = clamp01(p->thickness);
+    int rising = displace >= 0;
+    float dark[3] = { p->dark[0] / 255.0f, p->dark[1] / 255.0f, p->dark[2] / 255.0f };
+    float light[3] = { p->light[0] / 255.0f, p->light[1] / 255.0f, p->light[2] / 255.0f };
+    if (original) dark[0] = dark[1] = dark[2] = 0;
+    const float *screen = dark, *phosphor = light;
+    __block int failed = 0;
+    in_bands(width, ^(size_t first, size_t last) {
+        float *cover = malloc(height * sizeof(float) * 4);
+        if (!cover) { failed = 1; return; }
+        float *color = cover + height;
+        for (size_t x = first; x < last; ++x) {
+            memset(cover, 0, height * sizeof(float));
+            float along = fmodf((float)x + 0.5f, (float)spacing) - middle;
+            // The edge of everything drawn so far in this column; lines further back show only beyond it.
+            float horizon = rising ? INFINITY : -INFINITY;
+            for (size_t step = 0; step < lines; ++step) {
+                size_t line = rising ? lines - 1 - step : step;
+                // Dots: darker than the Dots level, the line breaks into beads, one every line spacing, each lit in the
+                // tone at its middle; just above it, into dashes that close up into the solid line.
+                float beading = dots > 0 ? clamp01((dots - tone[line * width + x]) / 0.2f) : 0, across = along * beading;
+                long centered = lroundf((float)x - across);
+                size_t at = centered < 0 ? 0 : (size_t)centered >= width ? width - 1 : (size_t)centered;
+                size_t i = line * width + at;
+                float t = tone[i];
+                float lit = threshold > 0 ? clamp01((t - threshold) / 0.04f) : 1;
+                if (lit <= 0) continue;
+                // Drawn between this column's height and the last's, so a steep climb never breaks the line.
+                float base = (float)line * (float)spacing + middle;
+                float here = base - displace * lift[i], before = at > 0 ? base - displace * lift[i - 1] : here;
+                float lo = fminf(here, before), hi = fmaxf(here, before);
+                float c[3];
+                for (int k = 0; k < 3; ++k) c[k] = original ? scan[(size_t)k * plane + i] : screen[k] + (phosphor[k] - screen[k]) * t;
+                // Half the line's height: thinner where the picture is dim.
+                float beam = middle * thickness * (0.29f + 0.71f * sqrtf(clamp01(t)));
+                long top = (long)floorf(rising ? lo - beam - 1 : fmaxf(lo - beam - 1, horizon - 1));
+                long bottom = (long)ceilf(rising ? fminf(hi + beam + 1, horizon + 1) : hi + beam + 1);
+                if (top < 0) top = 0;
+                if (bottom > (long)height) bottom = (long)height;
+                for (long y = top; y < bottom; ++y) {
+                    float yy = (float)y + 0.5f;
+                    float off = yy < lo ? lo - yy : yy > hi ? yy - hi : 0;
+                    float distance = sqrtf(off * off + across * across);
+                    float hidden = rising ? clamp01(horizon - yy + 0.5f) : clamp01(yy - horizon + 0.5f);
+                    float shown = clamp01(beam - distance + 0.5f) * lit * hidden;
+                    if (shown > cover[y]) {
+                        cover[y] = shown;
+                        color[y * 3] = c[0]; color[y * 3 + 1] = c[1]; color[y * 3 + 2] = c[2];
+                    }
+                }
+                if (lit > 0.5f) horizon = rising ? fminf(horizon, lo - beam) : fmaxf(horizon, hi + beam);
+            }
+            for (size_t y = 0; y < height; ++y) {
+                if (!alpha[y * width + x]) continue;
+                // The beam is driven brighter than the picture, making up for the dark screen between lines.
+                float shown = cover[y];
+                write_pixel(rgba + y * stride + x * 4, screen[0] + (color[y * 3] * 1.35f - screen[0]) * shown,
+                            screen[1] + (color[y * 3 + 1] * 1.35f - screen[1]) * shown,
+                            screen[2] + (color[y * 3 + 2] * 1.35f - screen[2]) * shown);
+            }
+        }
+        free(cover);
+    });
+    free(tone); free(lift);
+    return !failed;
+}
+
 int scanlines_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, const ScanlinesParams *p) {
     size_t count = width * height;
     if (!count) return 1;
@@ -391,71 +511,9 @@ int scanlines_apply(uint8_t *rgba, size_t width, size_t height, size_t stride, c
         }
     });
 
-    float middle = (float)spacing / 2, dots = clamp01(p->dots), thickness = clamp01(p->thickness);
-    float displace = p->displace > 0 ? p->displace : 0, threshold = clamp01(p->threshold);
-    float dark[3] = { p->dark[0] / 255.0f, p->dark[1] / 255.0f, p->dark[2] / 255.0f };
-    float light[3] = { p->light[0] / 255.0f, p->light[1] / 255.0f, p->light[2] / 255.0f };
-    const float *screen = dark, *phosphor = light;
-    // A displaced line can reach rows a few lines away; each row looks at every line that could.
-    long reach = (long)ceilf(displace + middle) + 1;
-    in_bands(height, ^(size_t first, size_t last) {
-        for (size_t y = first; y < last; ++y) {
-            uint8_t *row = rgba + y * stride;
-            float yy = (float)y + 0.5f;
-            long lowest = ((long)y - reach - (long)spacing) / (long)spacing, highest = ((long)y + reach + (long)displace) / (long)spacing;
-            if (lowest < 0) lowest = 0;
-            if (highest >= (long)lines) highest = (long)lines - 1;
-            for (size_t x = 0; x < width; ++x) {
-                if (!alpha[y * width + x]) continue;
-                // Dots: the line breaks into beads, one every line spacing, each lit in the tone at its middle.
-                float along = fmodf((float)x + 0.5f, (float)spacing) - middle;
-                long centered = lroundf((float)x - along * dots);
-                size_t at = centered < 0 ? 0 : (size_t)centered >= width ? width - 1 : (size_t)centered;
-                float best = 0, bestColor[3] = { 0, 0, 0 };
-                for (long line = lowest; line <= highest; ++line) {
-                    const float *lineScan = scan + (size_t)line * width;
-                    float t = 0, color[3];
-                    if (original) {
-                        color[0] = scan[((size_t)0 * lines + (size_t)line) * width + at];
-                        color[1] = scan[((size_t)1 * lines + (size_t)line) * width + at];
-                        color[2] = scan[((size_t)2 * lines + (size_t)line) * width + at];
-                        t = 0.2126f * color[0] + 0.7152f * color[1] + 0.0722f * color[2];
-                    } else {
-                        t = lineScan[at];
-                        for (int c = 0; c < 3; ++c) color[c] = screen[c] + (phosphor[c] - screen[c]) * t;
-                    }
-                    // Below the threshold, no line; just above it, a line fading in.
-                    float lit = threshold > 0 ? clamp01((t - threshold) / 0.04f) : 1;
-                    if (lit <= 0) continue;
-                    // Displace: bright parts lift the line, so it follows the picture's shapes. Where it climbs or
-                    // drops steeply it is drawn between this column's height and the last's, so it never breaks.
-                    float base = (float)line * (float)spacing + middle;
-                    float here = base - displace * t;
-                    float before = here;
-                    if (displace > 0 && at > 0) {
-                        float previous = original
-                            ? 0.2126f * scan[((size_t)0 * lines + (size_t)line) * width + at - 1]
-                              + 0.7152f * scan[((size_t)1 * lines + (size_t)line) * width + at - 1]
-                              + 0.0722f * scan[((size_t)2 * lines + (size_t)line) * width + at - 1]
-                            : lineScan[at - 1];
-                        before = base - displace * previous;
-                    }
-                    float lo = here < before ? here : before, hi = here < before ? before : here;
-                    float off = yy < lo ? lo - yy : yy > hi ? yy - hi : 0;
-                    // Half the line's height: thinner where the picture is dim.
-                    float beam = middle * thickness * (0.29f + 0.71f * sqrtf(clamp01(t)));
-                    float across = along * dots, distance = sqrtf(off * off + across * across);
-                    float cover = clamp01(beam - distance + 0.5f) * lit;
-                    if (cover > best) { best = cover; bestColor[0] = color[0]; bestColor[1] = color[1]; bestColor[2] = color[2]; }
-                }
-                // The beam is driven brighter than the picture, making up for the dark screen between lines.
-                float br = original ? 0 : screen[0], bg = original ? 0 : screen[1], bb = original ? 0 : screen[2];
-                write_pixel(row + x * 4, br + (bestColor[0] * 1.35f - br) * best, bg + (bestColor[1] * 1.35f - bg) * best,
-                            bb + (bestColor[2] * 1.35f - bb) * best);
-            }
-        }
-    });
+    int drawn = draw_lines(rgba, width, height, stride, p, scan, alpha, lines, spacing);
     free(tone); free(alpha); free(scan);
+    if (!drawn) return 0;
 
     // Color split: red moved one way and blue the other, for colored fringes on the lines' edges.
     long split = lroundf(p->split);

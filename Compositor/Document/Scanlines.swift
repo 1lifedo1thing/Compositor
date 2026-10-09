@@ -6,19 +6,23 @@ import CoreImage
 nonisolated struct ScanlinesSettings: Equatable, Sendable {
     static let lineSpacingRange: ClosedRange<Double> = 2...32
     static let wobbleRange: ClosedRange<Double> = 0...64
-    static let displaceRange: ClosedRange<Double> = 0...64
+    static let displaceRange: ClosedRange<Double> = -100...100
     static let splitRange: ClosedRange<Double> = 0...16
     /// How far apart the lines are, in layer pixels.
     var lineSpacing: Double = 4
     /// How much of the gap a full-bright line fills, 5–100%; dimmer parts draw it thinner.
     var thickness: Double = 70
-    /// 0–100%: light blooming around the lines, and how far they break into round dots.
+    /// 0–100%: light blooming around the lines.
     var glow: Double = 35
+    /// 0–100%: tones darker than this break the lines into round dots, through dashes into the solid line above it.
     var dots: Double = 0
     /// Pixels the lines waver sideways, in a wave down the screen.
     var wobble: Double = 0
-    /// Pixels a line rises where the picture under it is bright, so the lines ripple into the picture's shapes.
+    /// Pixels a line rises where the picture under it is bright (or, negative, falls), so the lines swell into the
+    /// picture's shapes, each hiding the lines behind it.
     var displace: Double = 0
+    /// 0–100%: how far the brightness is smoothed before it displaces the lines, from sharp ridges to rounded hills.
+    var smoothness: Double = 50
     /// 0–100%: tones darker than this draw no line, leaving the screen dark.
     var threshold: Double = 0
     /// Pixels the red and blue are moved apart, for colored fringes.
@@ -38,6 +42,7 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
         result.dots = ImageAdjustmentPixels.clamp(dots, 0...100, 0)
         result.wobble = ImageAdjustmentPixels.clamp(wobble, Self.wobbleRange, 0)
         result.displace = ImageAdjustmentPixels.clamp(displace, Self.displaceRange, 0)
+        result.smoothness = ImageAdjustmentPixels.clamp(smoothness, 0...100, 50)
         result.threshold = ImageAdjustmentPixels.clamp(threshold, 0...100, 0)
         result.split = ImageAdjustmentPixels.clamp(split, Self.splitRange, 0).rounded()
         result.density = ImageAdjustmentPixels.clamp(density, -100...100, 0)
@@ -59,7 +64,7 @@ nonisolated struct ScanlinesSettings: Equatable, Sendable {
                                          dots: Float(settings.dots / 100), wobble: Float(settings.wobble),
                                          displace: Float(settings.displace), threshold: Float(settings.threshold / 100),
                                          split: Float(settings.split), density: Float(settings.density / 100),
-                                         contrast: Float(settings.contrast / 100), originalColors: settings.colors == .original ? 1 : 0,
+                                         contrast: Float(settings.contrast / 100), smoothness: Float(settings.smoothness / 100), originalColors: settings.colors == .original ? 1 : 0,
                                          dark: dark, light: light)
             failed = scanlines_apply(pixels, width, height, stride, &params) == 0
         }
