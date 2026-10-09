@@ -65,7 +65,7 @@ struct NativeLayerList: NSViewRepresentable {
             rowDetails = Dictionary(uniqueKeysWithValues: entries.map { ($0.layer.id, $0) })
             let expansionChanged = oldCollapsed != session.collapsedGroupIDs
             oldCollapsed = session.collapsedGroupIDs
-            let enabled = session.canEditLayers
+            let enabled = session.layersLookEditable
             synchronizing = true
             defer { synchronizing = false }
             let old = rows
