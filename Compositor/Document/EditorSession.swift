@@ -382,6 +382,7 @@ final class EditorSession {
         guard brushStroke == nil, warpStroke == nil, levels == nil else { return }
         if id != activeLayerID { commitTransform(); resolveGradient() }
         activeLayerID = id
+        revealActiveLayer()
     }
     func selectTool(_ value: NavigationTool) {
         if tool != value, !finishText() { return }
