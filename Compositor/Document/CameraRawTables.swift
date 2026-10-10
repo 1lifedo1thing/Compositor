@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Camera Raw's Light and Color sliders as Photoshop's own Camera Raw Filter draws them: color tables measured from it
@@ -124,8 +125,15 @@ nonisolated enum CameraRawTables {
     /// What the adaptive sliders read from the picture before any of them: the mean of each pixel's brightest channel
     /// (Contrast), the mean luminance (Shadows) and the log-average of the brightest channel (Highlights), all in
     /// linear light and given as sRGB levels, 0…255.
-    struct Brightness {
+    struct Brightness: Sendable {
         var brightest = 128.0, luminance = 128.0, logBrightest = 128.0
+    }
+
+    static func brightness(of image: CGImage) -> Brightness {
+        guard let context = try? BrushRaster.context(width: image.width, height: image.height, mask: false),
+              let data = context.data else { return Brightness() }
+        BrushRaster.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height), mask: false, context: context)
+        return brightness(data.assumingMemoryBound(to: UInt8.self), width: image.width, height: image.height, stride: context.bytesPerRow)
     }
 
     static func brightness(_ pixels: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int) -> Brightness {
@@ -223,6 +231,14 @@ nonisolated enum CameraRawTables {
             }
         }
         return stages
+    }
+
+    /// No change, on the composing grid.
+    static func identity() -> [Float]? {
+        guard tables != nil else { return nil }
+        var out = [Float](repeating: 0, count: grid * grid * grid * 3)
+        camera_raw_compose(&out, Int32(grid), nil, 0, Int32(size))
+        return out
     }
 
     /// The stages run over the composing grid, or nil when there are none.

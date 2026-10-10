@@ -269,6 +269,23 @@ nonisolated struct CameraRawGradeWheel: Equatable, Sendable {
 }
 
 nonisolated extension CameraRawSettings {
+    /// Curve, Color Mixer and Color Grading run over a composed table (or no change, when there's none yet), so they
+    /// cost a pixel nothing more than the lookup it makes already.
+    func foldingColor(into composed: [Float]?) -> [Float]? {
+        guard var table = composed ?? CameraRawTables.identity() else { return composed }
+        let curve = curve.normalized
+        if curve.adjusts {
+            let tone = curve.toneTable(), red = curve.channelTable(curve.red), green = curve.channelTable(curve.green)
+            let blue = curve.channelTable(curve.blue)
+            camera_raw_table_curves(&table, Int32(CameraRawTables.grid), tone, red, green, blue)
+        }
+        let stages = CameraRawTables.mixerStages(for: mixer.normalized) + CameraRawTables.gradingStages(for: grading.normalized)
+        stages.withUnsafeBufferPointer {
+            camera_raw_compose_onto(&table, Int32(CameraRawTables.grid), $0.baseAddress, Int32($0.count), Int32(CameraRawTables.size))
+        }
+        return table
+    }
+
     /// Runs Curve, then Color Mixer, then Color Grading. `visualize` dims pixels outside that point color.
     func applyCurveColor(_ pixels: UnsafeMutablePointer<UInt8>, width: Int, height: Int, stride: Int, visualize: Int) {
         let curve = curve.normalized

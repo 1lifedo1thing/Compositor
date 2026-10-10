@@ -1,8 +1,18 @@
 #include "AdjustPixels.h"
 #include "LensPixels.h"
+#include <dispatch/dispatch.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+// Runs `body` over `count` items split into a few runs per core, each a (start, end) range, all at once.
+static void in_bands(size_t count, void (^body)(size_t start, size_t end)) {
+    size_t bands = count < 64 ? 1 : 32, size = (count + bands - 1) / bands;
+    dispatch_apply(bands, DISPATCH_APPLY_AUTO, ^(size_t band) {
+        size_t start = band * size, end = start + size < count ? start + size : count;
+        if (start < end) body(start, end);
+    });
+}
 
 void adjust_gradient_map(uint8_t *rgba, size_t width, size_t height, size_t stride, const uint8_t *table) {
     for (size_t y = 0; y < height; y++) {
@@ -256,7 +266,7 @@ static void table_lookup(const uint8_t *table, int size, const double in[3], dou
 }
 
 void camera_raw_compose(float *out, int grid, const CameraRawStage *stages, int count, int size) {
-    for (int r = 0; r < grid; ++r) {
+    in_bands((size_t)grid, ^(size_t first, size_t last) { for (int r = (int)first; r < (int)last; ++r) {
         for (int g = 0; g < grid; ++g) {
             for (int b = 0; b < grid; ++b) {
                 double color[3] = {(double)r / (grid - 1), (double)g / (grid - 1), (double)b / (grid - 1)};
@@ -267,7 +277,21 @@ void camera_raw_compose(float *out, int grid, const CameraRawStage *stages, int 
                 o[2] = (float)color[2];
             }
         }
-    }
+    } });
+}
+
+void camera_raw_compose_onto(float *table, int grid, const CameraRawStage *stages, int count, int size) {
+    if (count <= 0) return;
+    size_t entries = (size_t)grid * grid * grid;
+    in_bands(entries, ^(size_t first, size_t last) {
+        for (size_t i = first; i < last; ++i) {
+            double color[3] = {table[i * 3], table[i * 3 + 1], table[i * 3 + 2]};
+            for (int s = 0; s < count; ++s) camera_raw_stage_color(&stages[s], size, color);
+            table[i * 3] = (float)color[0];
+            table[i * 3 + 1] = (float)color[1];
+            table[i * 3 + 2] = (float)color[2];
+        }
+    });
 }
 
 void camera_raw_stage_color(const CameraRawStage *stage, int size, double *rgb) {
@@ -313,20 +337,38 @@ static void write_premultiplied(uint8_t *p, double r, double g, double b, double
 }
 
 void camera_raw_statistics(const uint8_t *rgba, size_t width, size_t height, size_t stride, double *out) {
-    double brightest = 0, luminance = 0, logBrightest = 0, weight = 0;
-    for (size_t y = 0; y < height; ++y) {
-        const uint8_t *row = rgba + y * stride;
-        for (size_t x = 0; x < width; ++x) {
-            const uint8_t *p = row + x * 4;
-            double alpha = p[3];
-            if (!alpha) continue;
-            double r = srgb_decode(fmin(1.0, p[0] / alpha)), g = srgb_decode(fmin(1.0, p[1] / alpha));
-            double b = srgb_decode(fmin(1.0, p[2] / alpha)), top = fmax(r, fmax(g, b)), w = alpha / 255.0;
-            brightest += w * top;
-            luminance += w * rec709(r, g, b);
-            logBrightest += w * log(top + 3e-4);
-            weight += w;
+    enum { bands = 32 };
+    double sums[bands][4];
+    memset(sums, 0, sizeof sums);
+    double decoded[256];
+    for (int i = 0; i < 256; ++i) decoded[i] = srgb_decode(i / 255.0);
+    double (*parts)[4] = sums;
+    const double *decode = decoded;
+    size_t rows = (height + bands - 1) / bands;
+    dispatch_apply(bands, DISPATCH_APPLY_AUTO, ^(size_t band) {
+        double brightest = 0, luminance = 0, logBrightest = 0, weight = 0;
+        size_t end = (band + 1) * rows < height ? (band + 1) * rows : height;
+        for (size_t y = band * rows; y < end; ++y) {
+            const uint8_t *row = rgba + y * stride;
+            for (size_t x = 0; x < width; ++x) {
+                const uint8_t *p = row + x * 4;
+                double alpha = p[3];
+                if (!alpha) continue;
+                double r, g, b;
+                if (p[3] == 255) { r = decode[p[0]]; g = decode[p[1]]; b = decode[p[2]]; }
+                else { r = srgb_decode(fmin(1.0, p[0] / alpha)); g = srgb_decode(fmin(1.0, p[1] / alpha)); b = srgb_decode(fmin(1.0, p[2] / alpha)); }
+                double top = fmax(r, fmax(g, b)), w = alpha / 255.0;
+                brightest += w * top;
+                luminance += w * rec709(r, g, b);
+                logBrightest += w * log(top + 3e-4);
+                weight += w;
+            }
         }
+        parts[band][0] = brightest; parts[band][1] = luminance; parts[band][2] = logBrightest; parts[band][3] = weight;
+    });
+    double brightest = 0, luminance = 0, logBrightest = 0, weight = 0;
+    for (int band = 0; band < bands; ++band) {
+        brightest += sums[band][0]; luminance += sums[band][1]; logBrightest += sums[band][2]; weight += sums[band][3];
     }
     if (weight <= 0) { out[0] = out[1] = out[2] = 0.5; return; }
     out[0] = srgb_encode(brightest / weight);
@@ -334,9 +376,51 @@ void camera_raw_statistics(const uint8_t *rgba, size_t width, size_t height, siz
     out[2] = srgb_encode(exp(logBrightest / weight) - 3e-4);
 }
 
+void camera_raw_scope(const uint8_t *rgba, size_t width, size_t height, size_t stride, int step, double *bins, double *scope,
+                      int side) {
+    enum { bands = 16 };
+    size_t binCount = 256 * 3, scopeCount = (size_t)side * side;
+    double *parts = calloc(bands * (binCount + scopeCount), sizeof(double));
+    if (!parts) return;
+    size_t rows = (height + bands - 1) / bands;
+    dispatch_apply(bands, DISPATCH_APPLY_AUTO, ^(size_t band) {
+        double *histogram = parts + band * (binCount + scopeCount), *plot = histogram + binCount;
+        size_t end = (band + 1) * rows < height ? (band + 1) * rows : height;
+        for (size_t y = band * rows; y < end; y += step) {
+            const uint8_t *row = rgba + y * stride;
+            for (size_t x = 0; x < width; x += step) {
+                const uint8_t *p = row + x * 4;
+                double alpha = p[3];
+                if (!alpha) continue;
+                double red = fmin(1.0, p[0] / alpha), green = fmin(1.0, p[1] / alpha), blue = fmin(1.0, p[2] / alpha);
+                double w = alpha / 255.0;
+                histogram[(int)lround(red * 255)] += w;
+                histogram[256 + (int)lround(green * 255)] += w;
+                histogram[512 + (int)lround(blue * 255)] += w;
+                double top = fmax(red, fmax(green, blue)), bottom = fmin(red, fmin(green, blue)), chroma = top - bottom;
+                if (chroma <= 1e-4 || top <= 1e-4) continue;
+                double hue = top == red ? (green - blue) / chroma : top == green ? 2 + (blue - red) / chroma : 4 + (red - green) / chroma;
+                hue /= 6;
+                if (hue < 0) hue += 1;
+                double angle = hue * 2 * M_PI, saturation = chroma / top;
+                int column = (int)((0.5 + cos(angle) * saturation * 0.48) * side), line = (int)((0.5 + sin(angle) * saturation * 0.48) * side);
+                column = column < 0 ? 0 : column >= side ? side - 1 : column;
+                line = line < 0 ? 0 : line >= side ? side - 1 : line;
+                plot[line * side + column] += w;
+            }
+        }
+    });
+    for (int band = 0; band < bands; ++band) {
+        const double *histogram = parts + band * (binCount + scopeCount);
+        for (size_t i = 0; i < binCount; ++i) bins[i] += histogram[i];
+        for (size_t i = 0; i < scopeCount; ++i) scope[i] += histogram[binCount + i];
+    }
+    free(parts);
+}
+
 void adjust_camera_raw(uint8_t *rgba, size_t width, size_t height, size_t stride, const float *table, int grid,
                        int clipping) {
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -363,7 +447,7 @@ void adjust_camera_raw(uint8_t *rgba, size_t width, size_t height, size_t stride
             }
             write_premultiplied(p, r, g, b, alpha);
         }
-    }
+    } });
 }
 
 static size_t clamped_index(int index, size_t limit) {
@@ -381,24 +465,28 @@ static int box_blur_plane(const float *src, float *dst, size_t width, size_t hei
     float *temp = malloc(width * height * sizeof(float));
     if (!temp) return 0;
     int window = radius * 2 + 1;
-    for (size_t y = 0; y < height; ++y) {
-        double sum = 0;
-        for (int k = -radius; k <= radius; ++k) sum += src[y * width + clamped_index(k, width)];
-        for (size_t x = 0; x < width; ++x) {
-            temp[y * width + x] = (float)(sum / window);
-            sum += src[y * width + clamped_index((int)x + radius + 1, width)];
-            sum -= src[y * width + clamped_index((int)x - radius, width)];
+    in_bands(height, ^(size_t first, size_t last) {
+        for (size_t y = first; y < last; ++y) {
+            double sum = 0;
+            for (int k = -radius; k <= radius; ++k) sum += src[y * width + clamped_index(k, width)];
+            for (size_t x = 0; x < width; ++x) {
+                temp[y * width + x] = (float)(sum / window);
+                sum += src[y * width + clamped_index((int)x + radius + 1, width)];
+                sum -= src[y * width + clamped_index((int)x - radius, width)];
+            }
         }
-    }
-    for (size_t x = 0; x < width; ++x) {
-        double sum = 0;
-        for (int k = -radius; k <= radius; ++k) sum += temp[clamped_index(k, height) * width + x];
-        for (size_t y = 0; y < height; ++y) {
-            dst[y * width + x] = (float)(sum / window);
-            sum += temp[clamped_index((int)y + radius + 1, height) * width + x];
-            sum -= temp[clamped_index((int)y - radius, height) * width + x];
+    });
+    in_bands(width, ^(size_t first, size_t last) {
+        for (size_t x = first; x < last; ++x) {
+            double sum = 0;
+            for (int k = -radius; k <= radius; ++k) sum += temp[clamped_index(k, height) * width + x];
+            for (size_t y = 0; y < height; ++y) {
+                dst[y * width + x] = (float)(sum / window);
+                sum += temp[clamped_index((int)y + radius + 1, height) * width + x];
+                sum -= temp[clamped_index((int)y - radius, height) * width + x];
+            }
         }
-    }
+    });
     free(temp);
     return 1;
 }
@@ -625,7 +713,7 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
     if (texture != 0 || clarity != 0 || glow > 0) {
         luma = malloc(count * sizeof(float));
         if (!luma) return;
-        for (size_t y = 0; y < height; ++y) {
+        in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
             uint8_t *row = rgba + y * stride;
             for (size_t x = 0; x < width; ++x) {
                 uint8_t *p = row + x * 4;
@@ -636,7 +724,7 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
                 double b = fmin(1.0, p[2] / alpha);
                 luma[y * width + x] = (float)rec709(r, g, b);
             }
-        }
+        } });
         // Radii in proportion to the picture, as fitted to Photoshop's on 1456-pixel-wide photos (8 and 32 there), so
         // a downscaled preview matches the full-size result.
         double side = (double)(width > height ? width : height);
@@ -678,8 +766,9 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
         free(luma); free(fine); free(coarse); free(glowPlane);
         return;
     }
-    double haze[3] = {1, 1, 1};
-    if (dehaze != 0) dehaze_haze(rgba, width, height, stride, haze);
+    double hazeColor[3] = {1, 1, 1};
+    if (dehaze != 0) dehaze_haze(rgba, width, height, stride, hazeColor);
+    const double *haze = hazeColor;
     double warmth = glowWarmth / 100.0;
     double glowRed, glowGreen, glowBlue, glowGain;
     if (glowStyle == 2) {
@@ -694,7 +783,7 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
         glowBlue = 0.75 - 0.6 * warmth;
         glowGain = glowStyle == 1 ? 1.4 : 1;
     }
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -722,7 +811,7 @@ void adjust_camera_raw_effects(uint8_t *rgba, size_t width, size_t height, size_
                              vignetteFeather, vignetteHighlights, vignetteStyle);
             write_premultiplied(p, r, g, b, alpha);
         }
-    }
+    } });
     free(luma);
     free(fine);
     free(coarse);
@@ -829,7 +918,7 @@ void adjust_camera_raw_curve_color(uint8_t *rgba, size_t width, size_t height, s
                                    double refineSaturation, const float *mixer, int pointCount, const float *points,
                                    const float *grade, double blending, double balance, int visualize,
                                    const float *mixerTable, const float *gradeTable, int grid) {
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -909,6 +998,17 @@ void adjust_camera_raw_curve_color(uint8_t *rgba, size_t width, size_t height, s
             }
             write_premultiplied(p, r, g, b, alpha);
         }
+    } });
+}
+
+void camera_raw_table_curves(float *table, int grid, const float *toneLut, const float *redLut, const float *greenLut,
+                             const float *blueLut) {
+    size_t entries = (size_t)grid * grid * grid;
+    for (size_t i = 0; i < entries; ++i) {
+        float *c = table + i * 3;
+        c[0] = (float)lut_at(redLut, lut_at(toneLut, c[0]));
+        c[1] = (float)lut_at(greenLut, lut_at(toneLut, c[1]));
+        c[2] = (float)lut_at(blueLut, lut_at(toneLut, c[2]));
     }
 }
 
@@ -999,7 +1099,7 @@ void adjust_camera_raw_detail(uint8_t *rgba, size_t width, size_t height, size_t
     float *luma = malloc(count * sizeof(float));
     float *work = malloc(count * sizeof(float));
     if (!luma || !work) { free(luma); free(work); return; }
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -1008,7 +1108,7 @@ void adjust_camera_raw_detail(uint8_t *rgba, size_t width, size_t height, size_t
             double r = fmin(1.0, p[0] / alpha), g = fmin(1.0, p[1] / alpha), b = fmin(1.0, p[2] / alpha);
             luma[y * width + x] = (float)rec709(r, g, b);
         }
-    }
+    } });
     if (noiseLuminance > 0) {
         int radius = effects_radius(1.0 + noiseLuminance / 50.0, scale);
         if (!box_blur_plane(luma, work, width, height, radius)) { free(luma); free(work); return; }
@@ -1098,7 +1198,7 @@ void adjust_camera_raw_detail(uint8_t *rgba, size_t width, size_t height, size_t
         free(planes);
     }
     if (sharpenAmount > 0) {
-        for (size_t y = 0; y < height; ++y) {
+        in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
             uint8_t *row = rgba + y * stride;
             for (size_t x = 0; x < width; ++x) {
                 uint8_t *p = row + x * 4;
@@ -1107,13 +1207,13 @@ void adjust_camera_raw_detail(uint8_t *rgba, size_t width, size_t height, size_t
                 double r = fmin(1.0, p[0] / alpha), g = fmin(1.0, p[1] / alpha), b = fmin(1.0, p[2] / alpha);
                 luma[y * width + x] = (float)rec709(r, g, b);
             }
-        }
+        } });
         int radius = effects_radius(detail_radius(sharpenRadius, scale), 1);
         if (!box_blur_plane(luma, work, width, height, radius)) { free(luma); free(work); return; }
         double amount = sharpenAmount / 100.0;
         double detailMix = sharpenDetail / 100.0;
         double threshold = (sharpenMasking / 100.0) * 0.35;
-        for (size_t y = 0; y < height; ++y) {
+        in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
             uint8_t *row = rgba + y * stride;
             for (size_t x = 0; x < width; ++x) {
                 uint8_t *p = row + x * 4;
@@ -1130,7 +1230,7 @@ void adjust_camera_raw_detail(uint8_t *rgba, size_t width, size_t height, size_t
                 scale_luminance(&r, &g, &b, sharpened);
                 write_premultiplied(p, r, g, b, alpha);
             }
-        }
+        } });
     }
     free(luma);
     free(work);
@@ -1222,7 +1322,7 @@ void adjust_camera_raw_optics(uint8_t *rgba, size_t width, size_t height, size_t
     }
     if (removeChromatic) optics_chromatic(rgba, width, height, stride, 0.45);
     if (purpleAmount == 0 && greenAmount == 0 && vignette == 0) return;
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -1233,7 +1333,7 @@ void adjust_camera_raw_optics(uint8_t *rgba, size_t width, size_t height, size_t
             optics_vignette_correct(&r, &g, &b, x, y, width, height, vignette, vignetteMidpoint, exposureTables, tableSize);
             write_premultiplied(p, r, g, b, alpha);
         }
-    }
+    } });
 }
 
 void adjust_camera_raw_calibration(uint8_t *rgba, size_t width, size_t height, size_t stride,
@@ -1250,7 +1350,7 @@ void adjust_camera_raw_calibration(uint8_t *rgba, size_t width, size_t height, s
     double gs = greenSaturation / 100.0 * 0.45 * versionScale;
     double bh = blueHue / 100.0 * (15.0 / 360.0) * versionScale;
     double bs = blueSaturation / 100.0 * 0.45 * versionScale;
-    for (size_t y = 0; y < height; ++y) {
+    in_bands(height, ^(size_t first, size_t last) { for (size_t y = first; y < last; ++y) {
         uint8_t *row = rgba + y * stride;
         for (size_t x = 0; x < width; ++x) {
             uint8_t *p = row + x * 4;
@@ -1275,5 +1375,5 @@ void adjust_camera_raw_calibration(uint8_t *rgba, size_t width, size_t height, s
             hsl_to_rgb(h, s, l, &r, &g, &b);
             write_premultiplied(p, r, g, b, alpha);
         }
-    }
+    } });
 }
