@@ -14,7 +14,14 @@ nonisolated enum CameraRawTables {
     /// 0.5; Whites, Blacks, Saturation and Vibrance, each −100…100 by 25; and Contrast, Highlights and Shadows, each
     /// at the seven `brightnesses` by the seven `adaptiveValues`.
     private static let exposureStart = 81, whitesStart = 102, blacksStart = 111, saturationStart = 120, vibranceStart = 129
-    private static let contrastStart = 138, highlightsStart = 187, shadowsStart = 236, count = 285
+    private static let contrastStart = 138, highlightsStart = 187, shadowsStart = 236
+    /// Then the Color Mixer, luminance, saturation and hue in turn, each for its eight colors (red, orange, yellow,
+    /// green, aqua, blue, purple, magenta); Calibration's red, green and blue hue and saturation; and the parametric
+    /// curve's Shadows, Darks, Lights and Highlights: each −100…100 by 50.
+    private static let mixerStart = 285, calibrationStart = 405, parametricStart = 435
+    /// Then Color Grading's shadow and highlight wheels, each at twelve hues (0…330 by 30) and saturations 25, 50 and
+    /// 100, at Photoshop's default Blending and Balance.
+    private static let gradingStart = 455, count = 527
     private static let brightnesses: [Double] = [53, 80, 104, 130, 160, 190, 224]
     private static let adaptiveValues: [Double] = [-100, -50, -25, 0, 25, 50, 100]
 
@@ -48,6 +55,9 @@ nonisolated enum CameraRawTables {
         }
         return tables
     }
+
+    /// Exposure's 21 tables, −5…5 by 0.5, one after another: the lens vignette correction is Exposure by position.
+    static var exposureTables: UnsafePointer<UInt8>? { table(exposureStart) }
 
     private static func table(_ index: Int) -> UnsafePointer<UInt8>? {
         tables.map { UnsafePointer($0 + index * entries) }
@@ -108,9 +118,19 @@ nonisolated enum CameraRawTables {
         return Brightness(brightest: out[0] * 255, luminance: out[1] * 255, logBrightest: out[2] * 255)
     }
 
-    /// The stages in Camera Raw's order, leaving out sliders at zero.
+    private static func fifty(_ start: Int, _ value: Double) -> CameraRawStage {
+        stage(start, value, low: -100, step: 50, tables: 5)
+    }
+
+    /// The stages in Camera Raw's order, leaving out sliders at zero: Calibration, then Light and Color, then the
+    /// parametric curve while its dividers are where Photoshop's are measured (with them moved, the curve pass draws it).
     static func stages(for settings: CameraRawSettings, brightness: Brightness) -> [CameraRawStage] {
         var stages: [CameraRawStage] = []
+        let calibration = settings.calibration
+        for (index, value) in [calibration.redHue, calibration.redSaturation, calibration.greenHue, calibration.greenSaturation,
+                               calibration.blueHue, calibration.blueSaturation].enumerated() where value != 0 {
+            stages.append(fifty(calibrationStart + index * 5, value))
+        }
         if settings.exposure != 0 { stages.append(stage(exposureStart, settings.exposure, low: -5, step: 0.5, tables: 21)) }
         if settings.temperature != 0 || settings.tint != 0 {
             stages.append(whiteBalance(temperature: settings.temperature, tint: settings.tint))
@@ -124,6 +144,50 @@ nonisolated enum CameraRawTables {
         if settings.blacks != 0 { stages.append(stage(blacksStart, settings.blacks, low: -100, step: 25, tables: 9)) }
         if settings.saturation != 0 { stages.append(stage(saturationStart, settings.saturation, low: -100, step: 25, tables: 9)) }
         if settings.vibrance != 0 { stages.append(stage(vibranceStart, settings.vibrance, low: -100, step: 25, tables: 9)) }
+        let curve = settings.curve
+        if curve.hasMeasuredDividers {
+            for (index, value) in [curve.shadows, curve.darks, curve.lights, curve.highlights].enumerated() where value != 0 {
+                stages.append(fifty(parametricStart + index * 5, value))
+            }
+        }
+        return stages
+    }
+
+    /// Whether the measured tables draw Color Grading's shadow and highlight color: while Blending is where they were
+    /// measured.
+    static func drawsGrading(_ grading: CameraRawGradingSettings) -> Bool { grading.blending == 50 }
+
+    /// Color Grading's shadow and highlight colors, highlights first, the order that composes like Photoshop's. Each
+    /// blends the tables either side of its hue and saturation; below 25 the lower one is no change. Balance, as
+    /// Photoshop's does, strengthens one wheel and weakens the other, which with these tables is a share of saturation,
+    /// fitted to its renders at ±50.
+    static func gradingStages(for grading: CameraRawGradingSettings) -> [CameraRawStage] {
+        var stages: [CameraRawStage] = []
+        let balance = grading.balance / 100
+        let shares = (highlights: balance < 0 ? 1 + 1.2 * balance : 1 + balance, shadows: balance < 0 ? 1 - 0.4 * balance : 1 - balance)
+        for (wheel, color, share) in [(1, grading.highlights, shares.highlights), (0, grading.shadows, shares.shadows)]
+            where color.saturation * share > 0 {
+            let position = color.hue.truncatingRemainder(dividingBy: 360) / 30
+            let first = Int(position) % 12, second = (first + 1) % 12, around = position - Double(Int(position))
+            let (level, up) = between(color.saturation * share, in: [0, 25, 50, 100])
+            func entry(_ hue: Int, _ saturation: Int) -> UnsafePointer<UInt8>? {
+                saturation == 0 ? nil : table(gradingStart + (wheel * 12 + hue) * 3 + saturation - 1)
+            }
+            stages.append(CameraRawStage(table: (entry(first, level), entry(first, level + 1), entry(second, level), entry(second, level + 1)),
+                                         weight: (Float((1 - around) * (1 - up)), Float((1 - around) * up),
+                                                  Float(around * (1 - up)), Float(around * up))))
+        }
+        return stages
+    }
+
+    /// The Color Mixer's stages: luminance, then saturation, then hue, the order that composes like Photoshop's.
+    static func mixerStages(for mixer: CameraRawMixerSettings) -> [CameraRawStage] {
+        var stages: [CameraRawStage] = []
+        for (kind, values) in [mixer.luminance, mixer.saturation, mixer.hue].enumerated() {
+            for (color, value) in values.enumerated() where value != 0 {
+                stages.append(fifty(mixerStart + (kind * 8 + color) * 5, value))
+            }
+        }
         return stages
     }
 

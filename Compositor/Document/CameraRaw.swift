@@ -222,7 +222,8 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
             if clipping == nil && !sharpenMask && settings.adjustsCalibration {
                 settings.applyCalibration(pixels: pixels, width: width, height: height, stride: stride)
             }
-            if settings.adjustsLight || settings.adjustsColor || clipping != nil {
+            if settings.adjustsLight || settings.adjustsColor || settings.adjustsCalibration
+                || (settings.curve.hasMeasuredDividers && settings.adjustsCurve) || clipping != nil {
                 let brightness = settings.contrast != 0 || settings.highlights != 0 || settings.shadows != 0
                     ? CameraRawTables.brightness(pixels, width: width, height: height, stride: stride) : CameraRawTables.Brightness()
                 let table = CameraRawTables.compose(CameraRawTables.stages(for: settings, brightness: brightness))

@@ -157,6 +157,39 @@ struct CameraRawTests {
         }
     }
 
+    /// The Color Mixer, Calibration, the parametric curve and both vignettes as Photoshop's Camera Raw Filter draws them:
+    /// its own measured numbers.
+    @Test func mixerCalibrationCurveAndVignettesMatchPhotoshop() throws {
+        func applied(_ input: [Int], _ adjust: (inout CameraRawSettings) -> Void) throws -> [Int] {
+            var settings = CameraRawSettings()
+            adjust(&settings)
+            let source = try image(red: CGFloat(input[0]) / 255, green: CGFloat(input[1]) / 255, blue: CGFloat(input[2]) / 255)
+            return Array(try pixels(settings.apply(source))[0].prefix(3))
+        }
+        func near(_ got: [Int], _ expected: [Int]) -> Bool { zip(got, expected).allSatisfy { abs($0 - $1) <= 4 } }
+        let cases: [(String, [Int], (inout CameraRawSettings) -> Void, [Int])] = [
+            ("orange saturation −60", [230, 115, 0], { $0.mixer.saturation[1] = -60 }, [189, 130, 107]),
+            ("red hue +60", [230, 92, 92], { $0.mixer.hue[0] = 60 }, [227, 125, 83]),
+            ("blue luminance +60", [92, 92, 230], { $0.mixer.luminance[5] = 60 }, [142, 142, 248]),
+            ("blue primary saturation −60", [92, 92, 230], { $0.calibration.blueSaturation = -60 }, [149, 149, 226]),
+            ("red primary hue +60", [230, 92, 92], { $0.calibration.redHue = 60 }, [228, 118, 37]),
+            ("darks −60", [130, 130, 130], { $0.curve.darks = -60 }, [101, 101, 101]),
+        ]
+        for (name, input, adjust, expected) in cases {
+            let got = try applied(input, adjust)
+            #expect(near(got, expected), "\(name): \(got), Photoshop \(expected)")
+        }
+        // Vignettes on mid gray, 3:2, at a corner: the lens correction brightens it to 223, the post-crop one at −60
+        // darkens it to 30.
+        let wide = try image(width: 300, height: 200, red: 128 / 255, green: 128 / 255, blue: 128 / 255)
+        var lens = CameraRawSettings()
+        lens.optics.vignetteAmount = 100
+        #expect(abs(try pixels(lens.apply(wide))[0][0] - 223) <= 6)
+        var postCrop = CameraRawSettings()
+        postCrop.vignetteAmount = -60
+        #expect(abs(try pixels(postCrop.apply(wide))[0][0] - 30) <= 6)
+    }
+
     @Test func vibranceFavorsDullColorsAndProtectsSkinWhileSaturationDoesNot() throws {
         let dullGreen = try image(red: 77 / 255, green: 153 / 255, blue: 77 / 255)
         let saturatedGreen = try image(red: 20 / 255, green: 200 / 255, blue: 20 / 255)
