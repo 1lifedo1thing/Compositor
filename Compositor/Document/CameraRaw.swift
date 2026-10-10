@@ -223,10 +223,10 @@ nonisolated struct CameraRawSettings: Equatable, Sendable {
                 settings.applyCalibration(pixels: pixels, width: width, height: height, stride: stride)
             }
             if settings.adjustsLight || settings.adjustsColor || clipping != nil {
-                let stages = CameraRawTables.stages(for: settings)
-                let before = CameraRawTables.compose(stages.before), after = CameraRawTables.compose(stages.after)
-                adjust_camera_raw(pixels, width, height, stride, before, after, Int32(CameraRawTables.grid),
-                                  settings.highlights, settings.shadows, mode)
+                let brightness = settings.contrast != 0 || settings.highlights != 0 || settings.shadows != 0
+                    ? CameraRawTables.brightness(pixels, width: width, height: height, stride: stride) : CameraRawTables.Brightness()
+                let table = CameraRawTables.compose(CameraRawTables.stages(for: settings, brightness: brightness))
+                adjust_camera_raw(pixels, width, height, stride, table, Int32(CameraRawTables.grid), mode)
             }
             if paintColor { settings.applyCurveColor(pixels, width: width, height: height, stride: stride, visualize: visualizePointColor) }
             if paintEffects {

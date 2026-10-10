@@ -1,18 +1,22 @@
 import Foundation
 
-/// Camera Raw's per-pixel Light and Color sliders as Photoshop's own Camera Raw Filter draws them: color tables
-/// measured from it (Resources/CameraRawTables.bin), each the colors of a 17³ grid after one slider at one value.
-/// A value in between blends the two nearest tables. Temperature and Tint, which Camera Raw turns into one white
-/// point together, come from a grid of both and blend four.
+/// Camera Raw's Light and Color sliders as Photoshop's own Camera Raw Filter draws them: color tables measured from it
+/// (Resources/CameraRawTables.bin), each the colors of a 17³ grid after one slider at one value. A value in between
+/// blends the two nearest tables. Temperature and Tint, which Camera Raw turns into one white point together, come
+/// from a grid of both and blend four. Contrast, Highlights and Shadows adapt to the picture, each to one measure of
+/// its brightness, so theirs were measured on backgrounds of seven brightnesses and blend across those too.
 nonisolated enum CameraRawTables {
     static let size = 17
     /// The grid the stages are composed onto, finer than the tables so composing adds little blur.
     static let grid = 33
     private static let entries = size * size * size * 3
     /// White balance: a 9 × 9 grid, Temperature by rows and Tint across, each −100…100 by 25. Then Exposure −5…5 by
-    /// 0.5, and Contrast, Whites, Blacks, Saturation and Vibrance, each −100…100 by 25.
-    private static let exposureStart = 81, contrastStart = 102, whitesStart = 111, blacksStart = 120
-    private static let saturationStart = 129, vibranceStart = 138, count = 147
+    /// 0.5; Whites, Blacks, Saturation and Vibrance, each −100…100 by 25; and Contrast, Highlights and Shadows, each
+    /// at the seven `brightnesses` by the seven `adaptiveValues`.
+    private static let exposureStart = 81, whitesStart = 102, blacksStart = 111, saturationStart = 120, vibranceStart = 129
+    private static let contrastStart = 138, highlightsStart = 187, shadowsStart = 236, count = 285
+    private static let brightnesses: [Double] = [53, 80, 104, 130, 160, 190, 224]
+    private static let adaptiveValues: [Double] = [-100, -50, -25, 0, 25, 50, 100]
 
     /// Every table, red slowest then green then blue, 3 bytes a color. Read once and kept for the app's life.
     static let tables: UnsafeMutablePointer<UInt8>? = load()
@@ -49,6 +53,25 @@ nonisolated enum CameraRawTables {
         tables.map { UnsafePointer($0 + index * entries) }
     }
 
+    /// The two entries of `points` (rising) either side of `value`, and how far it is between them.
+    private static func between(_ value: Double, in points: [Double]) -> (Int, Double) {
+        let value = min(points[points.count - 1], max(points[0], value))
+        var index = 0
+        while index < points.count - 2 && value > points[index + 1] { index += 1 }
+        return (index, (value - points[index]) / (points[index + 1] - points[index]))
+    }
+
+    /// An adaptive slider at `value`, for a picture whose measure of brightness is `brightness` (sRGB, 0…255): the
+    /// four tables around both, blended.
+    private static func adaptive(_ start: Int, _ value: Double, brightness: Double) -> CameraRawStage {
+        let (row, down) = between(brightness, in: brightnesses)
+        let (column, across) = between(value, in: adaptiveValues)
+        let width = adaptiveValues.count, base = start + row * width + column
+        return CameraRawStage(table: (table(base), table(base + 1), table(base + width), table(base + width + 1)),
+                              weight: (Float((1 - down) * (1 - across)), Float((1 - down) * across),
+                                       Float(down * (1 - across)), Float(down * across)))
+    }
+
     /// The two tables either side of `value` on a run of tables `step` apart from `low`, and how far it is between.
     private static func between(_ value: Double, low: Double, step: Double, tables: Int) -> (Int, Double) {
         let position = min(Double(tables - 1), max(0, (value - low) / step))
@@ -72,20 +95,36 @@ nonisolated enum CameraRawTables {
                                        Float(down * (1 - across)), Float(down * across)))
     }
 
-    /// The stages before Highlights and Shadows (Exposure, white balance, Contrast) and after them (Whites, Blacks,
-    /// Saturation, Vibrance), in Camera Raw's order, leaving out sliders at zero.
-    static func stages(for settings: CameraRawSettings) -> (before: [CameraRawStage], after: [CameraRawStage]) {
-        var before: [CameraRawStage] = [], after: [CameraRawStage] = []
-        if settings.exposure != 0 { before.append(stage(exposureStart, settings.exposure, low: -5, step: 0.5, tables: 21)) }
+    /// What the adaptive sliders read from the picture before any of them: the mean of each pixel's brightest channel
+    /// (Contrast), the mean luminance (Shadows) and the log-average of the brightest channel (Highlights), all in
+    /// linear light and given as sRGB levels, 0…255.
+    struct Brightness {
+        var brightest = 128.0, luminance = 128.0, logBrightest = 128.0
+    }
+
+    static func brightness(_ pixels: UnsafePointer<UInt8>, width: Int, height: Int, stride: Int) -> Brightness {
+        var out = [0.0, 0.0, 0.0]
+        camera_raw_statistics(pixels, width, height, stride, &out)
+        return Brightness(brightest: out[0] * 255, luminance: out[1] * 255, logBrightest: out[2] * 255)
+    }
+
+    /// The stages in Camera Raw's order, leaving out sliders at zero.
+    static func stages(for settings: CameraRawSettings, brightness: Brightness) -> [CameraRawStage] {
+        var stages: [CameraRawStage] = []
+        if settings.exposure != 0 { stages.append(stage(exposureStart, settings.exposure, low: -5, step: 0.5, tables: 21)) }
         if settings.temperature != 0 || settings.tint != 0 {
-            before.append(whiteBalance(temperature: settings.temperature, tint: settings.tint))
+            stages.append(whiteBalance(temperature: settings.temperature, tint: settings.tint))
         }
-        if settings.contrast != 0 { before.append(stage(contrastStart, settings.contrast, low: -100, step: 25, tables: 9)) }
-        if settings.whites != 0 { after.append(stage(whitesStart, settings.whites, low: -100, step: 25, tables: 9)) }
-        if settings.blacks != 0 { after.append(stage(blacksStart, settings.blacks, low: -100, step: 25, tables: 9)) }
-        if settings.saturation != 0 { after.append(stage(saturationStart, settings.saturation, low: -100, step: 25, tables: 9)) }
-        if settings.vibrance != 0 { after.append(stage(vibranceStart, settings.vibrance, low: -100, step: 25, tables: 9)) }
-        return (before, after)
+        if settings.contrast != 0 { stages.append(adaptive(contrastStart, settings.contrast, brightness: brightness.brightest)) }
+        if settings.highlights != 0 {
+            stages.append(adaptive(highlightsStart, settings.highlights, brightness: brightness.logBrightest))
+        }
+        if settings.shadows != 0 { stages.append(adaptive(shadowsStart, settings.shadows, brightness: brightness.luminance)) }
+        if settings.whites != 0 { stages.append(stage(whitesStart, settings.whites, low: -100, step: 25, tables: 9)) }
+        if settings.blacks != 0 { stages.append(stage(blacksStart, settings.blacks, low: -100, step: 25, tables: 9)) }
+        if settings.saturation != 0 { stages.append(stage(saturationStart, settings.saturation, low: -100, step: 25, tables: 9)) }
+        if settings.vibrance != 0 { stages.append(stage(vibranceStart, settings.vibrance, low: -100, step: 25, tables: 9)) }
+        return stages
     }
 
     /// The stages run over the composing grid, or nil when there are none.

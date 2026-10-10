@@ -86,8 +86,9 @@ struct CameraRawTests {
         var settings = CameraRawSettings()
         settings.highlights = -100
         let recovered = try pixels(settings.apply(brightAndMid))
-        #expect(recovered[0][0] < 200, "highlights −100 darkens the bright tone: \(recovered[0])")
-        #expect(abs(recovered[1][0] - 128) <= 2, "and leaves mid gray: \(recovered[1])")
+        // Photoshop: 230 → 209, mid gray kept.
+        #expect(recovered[0][0] < 222, "highlights −100 darkens the bright tone: \(recovered[0])")
+        #expect(abs(recovered[1][0] - 128) <= 4, "and leaves mid gray: \(recovered[1])")
 
         settings = CameraRawSettings()
         settings.whites = 100
@@ -106,8 +107,9 @@ struct CameraRawTests {
         settings = CameraRawSettings()
         settings.shadows = 100
         let opened = try pixels(settings.apply(darkAndMid))
-        #expect(opened[0][0] > 50, "shadows +100 opens the dark tone: \(opened[0])")
-        #expect(abs(opened[1][0] - 128) <= 2, "and leaves mid gray: \(opened[1])")
+        // Photoshop: 20 → 33, mid gray kept.
+        #expect(opened[0][0] > 22, "shadows +100 opens the dark tone: \(opened[0])")
+        #expect(abs(opened[1][0] - 128) <= 6, "and leaves mid gray: \(opened[1])")
 
         settings = CameraRawSettings()
         settings.blacks = -100
@@ -400,21 +402,29 @@ struct CameraRawTests {
         #expect(softGap < hardGap, "negative clarity pulls the step together: \(softGap) vs \(hardGap)")
     }
 
+    /// Dehaze takes away, or adds, the haze of a picture's brightest part: a shadow under a pale sky deepens or lifts.
+    /// A picture of one color has no haze to find, and Photoshop leaves it be.
     @Test func dehazeDeepensOrLiftsAndKeepsAlpha() throws {
-        let dark = try image(red: 30 / 255, green: 30 / 255, blue: 30 / 255)
-        let pale = try image(red: 180 / 255, green: 150 / 255, blue: 150 / 255)
+        let context = try BrushRaster.context(width: 10, height: 10, mask: false)
+        context.setFillColor(CGColor(srgbRed: 200 / 255, green: 195 / 255, blue: 190 / 255, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 10, height: 5))
+        context.setFillColor(CGColor(srgbRed: 30 / 255, green: 30 / 255, blue: 30 / 255, alpha: 1))
+        context.fill(CGRect(x: 0, y: 5, width: 10, height: 5))
+        let skyAndShadow = try #require(context.makeImage())
+        let index = try #require(try pixels(skyAndShadow).firstIndex { $0[0] == 30 })
         var settings = CameraRawSettings()
         settings.dehaze = 100
-        let deepened = try pixels(settings.apply(dark))[0]
-        #expect(deepened[0] < 30, "positive dehaze darkens a shadow: \(deepened)")
-        let paleBefore = try pixels(pale)[0]
-        let paleAfter = try pixels(settings.apply(pale))[0]
-        #expect(chroma(paleAfter) > chroma(paleBefore), "and raises saturation: \(paleBefore) → \(paleAfter)")
+        let deepened = try pixels(settings.apply(skyAndShadow))[index]
+        #expect(deepened[0] < 30, "positive dehaze deepens the shadow: \(deepened)")
         settings.dehaze = -100
-        let lifted = try pixels(settings.apply(dark))[0]
-        #expect(lifted[0] > 30, "negative dehaze lifts a shadow: \(lifted)")
-        let faded = try pixels(settings.apply(pale))[0]
-        #expect(chroma(faded) < chroma(paleBefore), "and lowers saturation: \(faded)")
+        let lifted = try pixels(settings.apply(skyAndShadow))[index]
+        #expect(lifted[0] > 30, "negative dehaze lifts it: \(lifted)")
+        let pale = try image(red: 180 / 255, green: 150 / 255, blue: 150 / 255)
+        for amount in [100.0, -100.0] {
+            settings.dehaze = amount
+            let kept = try pixels(settings.apply(pale))[0]
+            #expect(kept == [180, 150, 150, 255], "one color is left be at \(amount): \(kept)")
+        }
         let translucent = try image(red: 30 / 255, green: 30 / 255, blue: 30 / 255, alpha: 0.5)
         let translucentAlpha = try pixels(translucent)[0][3]
         settings.dehaze = 100
@@ -809,9 +819,10 @@ struct CameraRawTests {
             let out = try levels(shadows: shadows, highlights: highlights)
             let rising = zip(out, out.dropFirst()).allSatisfy { pair in pair.1 >= pair.0 }
             #expect(rising, "shadows \(shadows), highlights \(highlights): tones out of order")
-            #expect(out[0] <= 2 && out[255] >= 253, "black \(out[0]), white \(out[255])")
+            // Photoshop's Highlights −100 brings white down to 239 on this ramp; everything else keeps it.
+            #expect(out[0] <= 2 && out[255] >= (highlights < 0 ? 235 : 253), "black \(out[0]), white \(out[255])")
         }
         let lifted = try levels(shadows: 100, highlights: 0)
-        #expect(lifted[45] >= 45 + 20, "shadows +100 lifts the dark tones: 45 → \(lifted[45])")
+        #expect(lifted[45] >= 45 + 12, "shadows +100 lifts the dark tones: 45 → \(lifted[45])")
     }
 }
