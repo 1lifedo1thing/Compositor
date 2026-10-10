@@ -272,7 +272,7 @@ void camera_raw_compose(float *out, int grid, const CameraRawStage *stages, int 
 
 void camera_raw_stage_color(const CameraRawStage *stage, int size, double *rgb) {
     double next[3] = {0, 0, 0};
-    for (int t = 0; t < 4; ++t) {
+    for (int t = 0; t < 8; ++t) {
         double w = stage->weight[t];
         if (w == 0) continue;
         double looked[3];

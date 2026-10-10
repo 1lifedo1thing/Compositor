@@ -283,13 +283,9 @@ nonisolated extension CameraRawSettings {
         let mixerFloats = [Float](repeating: 0, count: 24)
         let mixerTable = CameraRawTables.compose(CameraRawTables.mixerStages(for: mixer))
         let pointFloats = mixer.pointFloats
-        // The shadow and highlight colors come from Photoshop's measured tables while Blending and Balance are at their
-        // defaults; the formula keeps the rest (midtones, global and luminance).
-        let tablesGrade = CameraRawTables.drawsGrading(grading)
-        let gradeTable = tablesGrade ? CameraRawTables.compose(CameraRawTables.gradingStages(for: grading)) : nil
-        var formulaGrading = grading
-        if tablesGrade { formulaGrading.shadows.saturation = 0; formulaGrading.highlights.saturation = 0 }
-        let grade = formulaGrading.gradeFloats
+        // Color Grading comes whole from Photoshop's measured tables; the formula's wheels are left at zero.
+        let gradeTable = CameraRawTables.compose(CameraRawTables.gradingStages(for: grading))
+        let grade = [Float](repeating: 0, count: 12)
         tone.withUnsafeBufferPointer { toneP in
             red.withUnsafeBufferPointer { redP in
                 green.withUnsafeBufferPointer { greenP in

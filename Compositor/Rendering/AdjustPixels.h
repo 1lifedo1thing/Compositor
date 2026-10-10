@@ -30,11 +30,11 @@ void adjust_color_balance(uint8_t *rgba, size_t width, size_t height, size_t str
 // After resampling with a filter that rings (Lanczos), premultiplied RGBA colors can exceed their alpha;
 // this clamps each channel back to its pixel's alpha. `count` is the number of pixels.
 void rgba_clamp_premultiplied(uint8_t *rgba, size_t count);
-// One step of Camera Raw's Light and Color: up to four measured color tables (`size`³ sRGB colors, red slowest,
-// 3 bytes each) blended by weight, for a slider value between the ones measured. A null table is no change.
+// One step of Camera Raw: up to eight measured color tables (`size`³ sRGB colors, red slowest, 3 bytes each) blended
+// by weight, for settings between the ones measured. A null table is no change.
 typedef struct {
-    const uint8_t *table[4];
-    float weight[4];
+    const uint8_t *table[8];
+    float weight[8];
 } CameraRawStage;
 // Runs `count` stages in order over a `grid`³ lattice of sRGB colors into `out` (3 floats per color, 0…1, red
 // slowest), so a whole run of stages costs a pixel one lookup.
