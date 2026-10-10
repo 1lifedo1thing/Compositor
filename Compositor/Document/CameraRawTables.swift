@@ -29,17 +29,21 @@ nonisolated enum CameraRawTables {
     /// Every table, red slowest then green then blue, 3 bytes a color. Read once and kept for the app's life.
     static let tables: UnsafeMutablePointer<UInt8>? = load()
 
-    /// The file holds, for each table and channel in turn, each entry's difference from no change, as a running
-    /// difference from the entry before: the tables move smoothly, so this packs small.
+    /// The file holds, for each table and channel in turn, each entry's change from no change, in steps of `step` levels
+    /// (the rounding is at most a level, within the jitter of Photoshop's own 8-bit renders), as a running difference
+    /// from the entry before, packed with LZMA (xz): the tables move smoothly, so this comes to about 1.25 MB.
     private static func load() -> UnsafeMutablePointer<UInt8>? {
         guard let url = Bundle.main.url(forResource: "CameraRawTables", withExtension: "bin"),
-              let file = try? Data(contentsOf: url), file.count > 8, file.prefix(4) == Data("CRT2".utf8),
-              Int(file[4]) | Int(file[5]) << 8 == size, Int(file[6]) | Int(file[7]) << 8 == count,
-              let planes = try? (file.dropFirst(8) as NSData).decompressed(using: .zlib) as Data,
+              let file = try? Data(contentsOf: url), file.count > 10, file.prefix(4) == Data("CRT3".utf8) else { return nil }
+        let header = [UInt8](file.prefix(10))
+        func field(_ at: Int) -> Int { Int(header[at]) | Int(header[at + 1]) << 8 }
+        let step = field(8)
+        guard field(4) == size, field(6) == count, step > 0,
+              let planes = try? (file.dropFirst(10) as NSData).decompressed(using: .lzma) as Data,
               planes.count == count * entries else { return nil }
         let tables = UnsafeMutablePointer<UInt8>.allocate(capacity: count * entries)
         let cells = size * size * size
-        let level = (0..<size).map { UInt8((Double($0) * 255 / Double(size - 1)).rounded()) }
+        let level = (0..<size).map { Int((Double($0) * 255 / Double(size - 1)).rounded()) }
         planes.withUnsafeBytes { raw in
             let bytes = raw.bindMemory(to: UInt8.self)
             for table in 0..<count {
@@ -49,7 +53,8 @@ nonisolated enum CameraRawTables {
                     for cell in 0..<cells {
                         running &+= bytes[base + cell]
                         let axis = channel == 0 ? cell / (size * size) : channel == 1 ? (cell / size) % size : cell % size
-                        tables[table * entries + cell * 3 + channel] = running &+ level[axis]
+                        let value = level[axis] + Int(Int8(bitPattern: running)) * step
+                        tables[table * entries + cell * 3 + channel] = UInt8(min(255, max(0, value)))
                     }
                 }
             }
